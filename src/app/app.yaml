@@ -1,0 +1,11 @@
+command:
+  - "uvicorn"
+  - "app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+
+# PGHOST / PGDATABASE / PGUSER / PGPASSWORD / PGPORT are auto-injected once
+# a Lakebase database resource with key "database" is attached to this app
+# (Databricks Apps UI/CLI -> Configure -> + Add resource -> Lakebase database).

@@ -1,0 +1,22 @@
+resources:
+  jobs:
+    keep_app_alive_job:
+      name: "${var.app_name}-keep-alive"
+      schedule:
+        quartz_cron_expression: "0 0 0 * * ?"
+        timezone_id: "UTC"
+        pause_status: UNPAUSED
+      tasks:
+        - task_key: ping_app
+          environment_key: keep_alive_env
+          spark_python_task:
+            python_file: ../src/jobs/keep_app_alive.py
+            parameters:
+              - ${var.app_name}
+      environments:
+        - environment_key: keep_alive_env
+          spec:
+            client: "4"
+            dependencies:
+              - databricks-sdk
+              - requests

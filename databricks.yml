@@ -13,6 +13,9 @@ variables:
     description: The catalog to use
   schema:
     description: The schema to use
+  app_name:
+    description: Name of the car trip tracker Databricks App
+    default: car-trip-tracker
 
 targets:
   dev:

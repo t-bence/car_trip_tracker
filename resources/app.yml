@@ -1,0 +1,6 @@
+resources:
+  apps:
+    car_trip_tracker_app:
+      name: ${var.app_name}
+      description: "Car trip tracker: logs trip start/end events into Lakebase"
+      source_code_path: ../src/app
