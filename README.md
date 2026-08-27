@@ -23,10 +23,10 @@ iOS Shortcut --HTTP(Data API)--> Lakebase Postgres (trip_events)
 - `src/lakebase/schema.sql`: one-time DDL for the `trip_events` table (run
   manually - see Setup below, not deployed by the bundle).
 - `resources/pipeline.yml`, `src/pipeline/`: the Lakeflow Declarative Pipeline
-  (Bronze is the Lakehouse Sync CDC table, not part of this pipeline):
-  - `silver_trip_events.sql` - deduplicated current state of each event
-  - `silver_trips.sql` - pairs consecutive start/end events into trips
-  - `gold_trip_summary_daily.sql` - daily trip counts and duration stats
+  (Python; Bronze is the Lakehouse Sync CDC table, not part of this pipeline):
+  - `silver_trip_events.py` - deduplicated current state of each event
+  - `silver_trips.py` - pairs consecutive start/end events into trips
+  - `gold_trip_summary_daily.py` - daily trip counts and duration stats
 
 ## Setup (one-time, manual)
 
