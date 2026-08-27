@@ -6,6 +6,6 @@ command:
   - "--port"
   - "8000"
 
-# PGHOST / PGDATABASE / PGUSER / PGPASSWORD / PGPORT are auto-injected once
-# a Lakebase database resource with key "database" is attached to this app
-# (Databricks Apps UI/CLI -> Configure -> + Add resource -> Lakebase database).
+# PGHOST / PGPORT / PGDATABASE / PGUSER / PGSSLMODE / LAKEBASE_ENDPOINT are
+# auto-injected by the platform from the "database" postgres resource declared
+# in resources/app.yml - no env vars need listing here.

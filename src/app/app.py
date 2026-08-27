@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Optional
 
 import psycopg2
+from databricks.sdk import WorkspaceClient
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -39,13 +40,18 @@ class TripEventOut(BaseModel):
 
 @contextmanager
 def get_connection():
+    # Lakebase auth is a short-lived OAuth token, not a static password - generate
+    # a fresh one per connection. Fine at this app's trip volume (a few events/day);
+    # a long-running pool would need a token-refresh loop instead.
+    w = WorkspaceClient()
+    token = w.postgres.generate_database_credential(endpoint=os.environ["LAKEBASE_ENDPOINT"]).token
     conn = psycopg2.connect(
         host=os.environ["PGHOST"],
         dbname=os.environ["PGDATABASE"],
         user=os.environ["PGUSER"],
-        password=os.environ["PGPASSWORD"],
+        password=token,
         port=os.environ.get("PGPORT", "5432"),
-        sslmode="require",
+        sslmode=os.environ.get("PGSSLMODE", "require"),
     )
     try:
         yield conn

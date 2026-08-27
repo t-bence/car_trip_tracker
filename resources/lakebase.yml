@@ -1,0 +1,8 @@
+resources:
+  postgres_databases:
+    car_trip_tracker_db:
+      # References the existing "lakebase" Lakebase project/branch (one project
+      # per account on Free Edition, already created outside this bundle) -
+      # only this dedicated database is owned by this bundle.
+      parent: projects/lakebase/branches/production
+      database_id: ${var.app_name}-${bundle.target}

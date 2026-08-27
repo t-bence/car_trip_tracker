@@ -4,3 +4,9 @@ resources:
       name: ${var.app_name}
       description: "Car trip tracker: logs trip start/end events into Lakebase"
       source_code_path: ../src/app
+      resources:
+        - name: database
+          postgres:
+            branch: projects/lakebase/branches/production
+            database: ${resources.postgres_databases.car_trip_tracker_db.name}
+            permission: CAN_CONNECT_AND_CREATE

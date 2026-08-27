@@ -16,7 +16,7 @@ resources:
       environments:
         - environment_key: keep_alive_env
           spec:
-            client: "4"
+            environment_version: "4"
             dependencies:
               - databricks-sdk
               - requests
