@@ -142,8 +142,6 @@ with this project. It's also possible to interact with it directly using the CLI
    ```
    $ uv run pytest
    ```
-   `tests/test_pipeline_transformations.py` runs against a local PySpark
-   session (`pyspark` is a dev dependency) and needs no Databricks
-   auth/compute. Other tests using the `spark` fixture from `tests/conftest.py`
-   go through Databricks Connect instead, and need `databricks-connect` /
-   `databricks-sdk` added as dev dependencies plus a configured profile.
+   Tests run against a local PySpark session (`spark` fixture in
+   `tests/conftest.py`, `pyspark` is a dev dependency) - no Databricks
+   auth/compute needed.

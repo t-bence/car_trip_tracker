@@ -1,16 +1,10 @@
-"""Unit tests for src/pipeline/transformations.py.
-
-Uses a local SparkSession instead of conftest.py's Databricks Connect fixture
-(no Databricks auth/compute needed) - a local `spark` fixture defined in this
-file overrides the session-wide one from conftest.py for tests in here only.
+"""Unit tests for src/pipeline/transformations.py, using the local
+SparkSession fixture from tests/conftest.py.
 """
 
 import sys
 from datetime import datetime
 from pathlib import Path
-
-import pytest
-from pyspark.sql import SparkSession
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "pipeline"))
 
@@ -21,21 +15,10 @@ from transformations import (
 )
 
 
-@pytest.fixture(scope="module")
-def spark():
-    session = (
-        SparkSession.builder.master("local[1]")
-        .appName("pipeline-unit-tests")
-        .config("spark.sql.session.timeZone", "UTC")
-        .getOrCreate()
-    )
-    yield session
-    session.stop()
-
-
 def _ts(iso: str) -> datetime:
     # Spark collects TIMESTAMP columns as naive datetimes in the session
-    # timezone (pinned to UTC above), so the expected value must be naive too.
+    # timezone (pinned to UTC in conftest.py), so the expected value must be
+    # naive too.
     return datetime.fromisoformat(iso)
 
 
