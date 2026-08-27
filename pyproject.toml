@@ -15,6 +15,7 @@ dependencies = [
 dev = [
     "pytest",
     "ruff",
+    "pyspark>=3.5,<4",
 ]
 
 [tool.ruff]

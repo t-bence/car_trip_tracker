@@ -1,37 +1,51 @@
-"""This file configures pytest, initializes Databricks Connect, and provides fixtures for Spark and loading test data."""
+"""This file configures pytest, initializes Databricks Connect, and provides fixtures for Spark and loading test data.
 
-import os, sys, pathlib
+Databricks Connect is only needed for tests that exercise real Databricks
+compute; it's imported lazily so tests that don't need it (e.g.
+test_pipeline_transformations.py, which uses a local SparkSession) can run
+without 'databricks-connect'/'databricks-sdk' installed or any Databricks
+auth configured.
+"""
+
+import csv
+import json
+import os
+import pathlib
+import sys
 from contextlib import contextmanager
 
+import pytest
 
-try:
-    from databricks.connect import DatabricksSession
-    from databricks.sdk import WorkspaceClient
-    from pyspark.sql import SparkSession
-    import pytest
-    import json
-    import csv
-    import os
-except ImportError:
-    raise ImportError(
-        "Test dependencies not found.\n\nRun tests using 'uv run pytest'. See http://docs.astral.sh/uv to learn more about uv."
-    )
+
+def _databricks_connect():
+    try:
+        from databricks.connect import DatabricksSession
+        from databricks.sdk import WorkspaceClient
+    except ImportError:
+        raise ImportError(
+            "Databricks Connect not found.\n\nAdd 'databricks-connect' and 'databricks-sdk' to "
+            "the dev dependency group to run tests against real Databricks compute, e.g.\n"
+            "  uv add --dev databricks-connect databricks-sdk\n"
+            "then run tests using 'uv run pytest'. See http://docs.astral.sh/uv to learn more about uv."
+        )
+    return DatabricksSession, WorkspaceClient
 
 
 @pytest.fixture()
-def spark() -> SparkSession:
-    """Provide a SparkSession fixture for tests.
+def spark():
+    """Provide a SparkSession fixture for tests, backed by Databricks Connect.
 
     Minimal example:
         def test_uses_spark(spark):
             df = spark.createDataFrame([(1,)], ["x"])
             assert df.count() == 1
     """
+    DatabricksSession, _ = _databricks_connect()
     return DatabricksSession.builder.getOrCreate()
 
 
 @pytest.fixture()
-def load_fixture(spark: SparkSession):
+def load_fixture(spark):
     """Provide a callable to load JSON or CSV from fixtures/ directory.
 
     Example usage:
@@ -58,6 +72,7 @@ def load_fixture(spark: SparkSession):
 
 def _enable_fallback_compute():
     """Enable serverless compute if no compute is specified."""
+    _, WorkspaceClient = _databricks_connect()
     conf = WorkspaceClient().config
     if conf.serverless_compute_id or conf.cluster_id or os.environ.get("SPARK_REMOTE"):
         return
@@ -82,6 +97,14 @@ def _allow_stderr_output(config: pytest.Config):
 
 def pytest_configure(config: pytest.Config):
     """Configure pytest session."""
+    try:
+        DatabricksSession, _ = _databricks_connect()
+    except ImportError:
+        # No Databricks Connect available - fine for test files that don't need it
+        # (e.g. tests using a local SparkSession). Tests that do need it will
+        # raise the same ImportError themselves via the `spark` fixture.
+        return
+
     with _allow_stderr_output(config):
         _enable_fallback_compute()
 

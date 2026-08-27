@@ -1,38 +1,30 @@
-"""Current state of trip start/end events.
+"""Trip start/end events, parsed from the Lakebase CDC history table.
 
 Assumes Lakehouse Sync (configured manually in the UI - see README) targets
-this pipeline's catalog/schema, so the CDC history table can be read by its
-bare name. Lakebase only stores a raw JSON `payload` TEXT cell plus the
-insert timestamp, so this layer is also where that JSON gets parsed.
+this pipeline's catalog/schema, so the source table can be read by its bare
+name.
+
+trip_events in Lakebase is insert-only - the Shortcut only ever INSERTs, never
+UPDATEs or DELETEs a row - so Lakehouse Sync's CDC history table only ever
+emits 'insert' records for it. That means no "latest state per id" dedup is
+needed here (see the medallion-from-cdc pattern the databricks-lakebase skill
+recommends for entities that DO get updated/deleted): the history table
+itself is an append-only Delta table, so a Streaming Table can read it
+incrementally off Delta's own version tracking instead of an MV rescanning
+the whole table on every run.
 """
 
 from pyspark import pipelines as dp
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
+from transformations import parse_trip_event
 
 
-@dp.materialized_view(
-    comment="Current state of trip start/end events, deduplicated from the "
-    "Lakebase CDC history table and parsed from their JSON payload",
+@dp.table(
+    comment="Trip start/end events, parsed from their JSON payload, streamed "
+    "incrementally off the Lakehouse Sync CDC history table",
 )
-@dp.expect_or_drop("valid_id", "id IS NOT NULL")
 @dp.expect_or_drop("valid_event_type", "event_type IN ('start', 'end')")
 def silver_trip_events():
-    history = spark.read.table("lb_trip_events_history").where(
-        F.col("_pg_change_type").isin("insert", "update_postimage", "delete")
+    history = spark.readStream.table("lb_trip_events_history").where(  # noqa: F821
+        "_pg_change_type = 'insert'"
     )
-    latest = (
-        history.withColumn(
-            "rn",
-            F.row_number().over(
-                Window.partitionBy("id").orderBy(F.col("_pg_lsn").desc())
-            ),
-        )
-        .where((F.col("rn") == 1) & (F.col("_pg_change_type") != "delete"))
-    )
-    return latest.select(
-        "id",
-        F.get_json_object("payload", "$.event_type").alias("event_type"),
-        F.get_json_object("payload", "$.note").alias("note"),
-        F.col("received_at").alias("event_time"),
-    )
+    return parse_trip_event(history)

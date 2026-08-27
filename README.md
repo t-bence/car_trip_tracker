@@ -24,9 +24,40 @@ iOS Shortcut --HTTP(Data API)--> Lakebase Postgres (trip_events)
   manually - see Setup below, not deployed by the bundle).
 - `resources/pipeline.yml`, `src/pipeline/`: the Lakeflow Declarative Pipeline
   (Python; Bronze is the Lakehouse Sync CDC table, not part of this pipeline):
-  - `silver_trip_events.py` - deduplicated current state of each event
-  - `silver_trips.py` - pairs consecutive start/end events into trips
-  - `gold_trip_summary_daily.py` - daily trip counts and duration stats
+  - `transformations.py` - pure DataFrame-in/DataFrame-out logic, unit tested
+    in `tests/test_pipeline_transformations.py` (no Databricks needed)
+  - `silver_trip_events.py` - Streaming Table: parses each event's JSON
+    payload, reading `lb_trip_events_history` incrementally. `trip_events` is
+    insert-only, so the CDC history table only ever contains `insert` rows for
+    it - no "latest state" dedup needed (see below for why)
+  - `silver_trips.py` - Materialized View: pairs consecutive start/end events
+    into trips (needs a full ordering across history, so it's a batch read)
+  - `gold_trip_summary_daily.py` - Materialized View: daily trip counts and
+    duration stats
+
+### Why a Streaming Table for silver_trip_events, not the CDC-dedup pattern?
+
+Lakehouse Sync's `lb_<table>_history` tables are built for the general case:
+Postgres rows that get updated or deleted, where you need "current state"
+reconstructed via `ROW_NUMBER() ... ORDER BY _pg_lsn DESC`. That's the
+pattern Databricks' own CDC-to-medallion guidance defaults to, and it means a
+Materialized View that rescans the whole history table on every run.
+
+`trip_events` never gets updated or deleted - the Shortcut only INSERTs - so
+every CDC record for it is an `insert`. The history table itself is still
+plain append-only Delta underneath (each Postgres change, including
+updates/deletes when they happen, is one more appended audit row, never an
+in-place mutation), so nothing stops a Streaming Table from reading it via
+`spark.readStream.table(...)`: Databricks tracks the last-processed Delta
+version and each new Lakehouse Sync commit becomes one incremental
+micro-batch, instead of a full recompute. That's the "ingest incrementally
+off the Delta versions" the CDC dedup pattern is normally there to avoid
+needing - it's just already available for free once you drop the
+update/delete-handling logic your source doesn't produce. The
+`silver_trips` pairing step still has to look across the *entire* event
+history at once (each trip needs to see both its start and its end), so it
+stays a Materialized View - that kind of full-dataset join/aggregation can't
+be expressed incrementally.
 
 ## Setup (one-time, manual)
 
@@ -111,3 +142,8 @@ with this project. It's also possible to interact with it directly using the CLI
    ```
    $ uv run pytest
    ```
+   `tests/test_pipeline_transformations.py` runs against a local PySpark
+   session (`pyspark` is a dev dependency) and needs no Databricks
+   auth/compute. Other tests using the `spark` fixture from `tests/conftest.py`
+   go through Databricks Connect instead, and need `databricks-connect` /
+   `databricks-sdk` added as dev dependencies plus a configured profile.

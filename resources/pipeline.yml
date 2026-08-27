@@ -6,6 +6,7 @@ resources:
       schema: ${var.schema}
       serverless: true
       continuous: false
+      root_path: ../src/pipeline
       libraries:
         - glob:
             include: ../src/pipeline/**
