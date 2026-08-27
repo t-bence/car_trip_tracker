@@ -9,9 +9,8 @@
 
 CREATE TABLE IF NOT EXISTS trip_events (
     id SERIAL PRIMARY KEY,
-    event_type TEXT NOT NULL CHECK (event_type IN ('start', 'end')),
-    event_time TIMESTAMPTZ NOT NULL DEFAULT now(),
-    note TEXT
+    payload TEXT NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Lakehouse Sync requires full row images for updates/deletes.
