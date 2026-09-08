@@ -102,8 +102,14 @@ be expressed incrementally.
 - a map with every trip drawn as a line from its start point (green) to its
   end point (red), with a histogram of trip starts and a slider under it that
   narrow the map to the trips that started inside a chosen window
-- trips per day and average trip length per day as charts
-- the `gold_trip_summary_daily` rows as a table
+- trips per day, and a histogram of trip durations with the share of trips
+  under 20 minutes
+- every drive of 20+ minutes on a time axis, with the longest gap between them
+
+The last two answer the question the tracker exists for: whether the driving
+profile suits a diesel. A particulate filter needs a sustained hot run to burn
+its soot off, so many short trips and long gaps between long drives are the
+warning signs.
 
 Everything is filtered by one date range, seeded with the full range of the
 data. The map uses Leaflet with OpenStreetMap tiles.

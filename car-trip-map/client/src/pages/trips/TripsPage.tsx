@@ -16,23 +16,42 @@ import {
   EmptyTitle,
   Input,
   Label,
-  LineChart,
   Skeleton,
   Slider,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
   useAnalyticsQuery,
 } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
 import { useTripBlue } from '../../lib/useTripBlue';
+import { summarizeGaps, type LongDrive } from '../../lib/longDrives';
+import { LongDriveTimeline } from './LongDriveTimeline';
 import { StartTimeHistogram } from './StartTimeHistogram';
 import { TripMap, type Trip } from './TripMap';
 
 const SOURCE_NOTE = 'car_usage.dev.silver_trips';
+
+/** A diesel particulate filter needs a sustained hot run to burn its soot off.
+ *  Twenty minutes of continuous driving is the usual rule of thumb. */
+const LONG_DRIVE_MINUTES = 20;
+
+const DURATION_BUCKETS = [
+  { label: '<5', max: 5 },
+  { label: '5-10', max: 10 },
+  { label: '10-20', max: 20 },
+  { label: '20-30', max: 30 },
+  { label: '30-45', max: 45 },
+  { label: '45-60', max: 60 },
+  { label: '60+', max: Infinity },
+];
+
+function bucketDurations(trips: { duration_minutes: number }[]) {
+  return DURATION_BUCKETS.map((bucket, index) => {
+    const from = index === 0 ? 0 : DURATION_BUCKETS[index - 1].max;
+    return {
+      bucket: bucket.label,
+      trip_count: trips.filter((trip) => trip.duration_minutes >= from && trip.duration_minutes < bucket.max).length,
+    };
+  });
+}
 
 /** The analytics API serializes every numeric column as a string. */
 function toNumber(value: unknown): number {
@@ -132,6 +151,20 @@ export function TripsPage() {
   }));
 
   const loading = !ready || totals.loading;
+
+  // Everything the diesel question needs, derived from the trips in range.
+  const durationBuckets = bucketDurations(tripRows);
+  const shortTrips = tripRows.filter((trip) => trip.duration_minutes < LONG_DRIVE_MINUTES).length;
+  const shortTripShare = tripRows.length > 0 ? (shortTrips / tripRows.length) * 100 : 0;
+
+  const longDrives: LongDrive[] = tripRows
+    .filter((trip) => trip.duration_minutes >= LONG_DRIVE_MINUTES)
+    .map((trip) => ({ startedAt: new Date(trip.start_time).getTime(), durationMinutes: trip.duration_minutes }))
+    .sort((a, b) => a.startedAt - b.startedAt);
+
+  const rangeFrom = startDate !== '' ? new Date(`${startDate}T00:00:00`).getTime() : 0;
+  const rangeTo = endDate !== '' ? new Date(`${endDate}T23:59:59`).getTime() : 0;
+  const gaps = summarizeGaps(longDrives, rangeFrom, rangeTo);
 
   // The slider under the map narrows the map to the trips that started inside
   // the window. Its own bounds are the earliest and latest start time of the
@@ -282,23 +315,27 @@ export function TripsPage() {
             <CardTitle>Trips per day</CardTitle>
           </CardHeader>
           <CardContent>
-            {dailyBusy ? (
-              <Skeleton className="h-[260px] w-full" />
-            ) : (
+            {!dailyBusy && daily.error && <QueryError message={daily.error} />}
+            {dailyBusy && <Skeleton className="h-[260px] w-full" />}
+            {!dailyBusy && !daily.error && (
               <BarChart data={dailyRows} xKey="trip_date" yKey="trip_count" colors={[tripBlue]} height={260} />
             )}
           </CardContent>
         </Card>
         <Card className="min-w-0">
           <CardHeader>
-            <CardTitle>Average trip length per day</CardTitle>
-            <CardDescription>Minutes</CardDescription>
+            <CardTitle>How long the trips are</CardTitle>
+            <CardDescription>
+              {tripsBusy
+                ? 'Minutes per trip'
+                : `${shortTrips} of ${tripRows.length} trips (${shortTripShare.toFixed(0)}%) are under ${LONG_DRIVE_MINUTES} minutes`}
+            </CardDescription>
           </CardHeader>
           <CardContent>
-            {dailyBusy ? (
+            {tripsBusy ? (
               <Skeleton className="h-[260px] w-full" />
             ) : (
-              <LineChart data={dailyRows} xKey="trip_date" yKey="avg_duration_minutes" showSymbol height={260} />
+              <BarChart data={durationBuckets} xKey="bucket" yKey="trip_count" colors={[tripBlue]} height={260} />
             )}
           </CardContent>
         </Card>
@@ -306,44 +343,44 @@ export function TripsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Daily aggregation</CardTitle>
-          <CardDescription>car_usage.dev.gold_trip_summary_daily</CardDescription>
+          <CardTitle>Long drives, and the gaps between them</CardTitle>
+          <CardDescription>
+            A diesel particulate filter burns its soot off during a sustained hot run. Each tick is a drive of{' '}
+            {LONG_DRIVE_MINUTES} minutes or more, placed on a real time axis; the shaded band is the longest stretch
+            without one. Tick height is the drive&apos;s length.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {!dailyBusy && daily.error && <QueryError message={daily.error} />}
-          {dailyBusy && <Skeleton className="h-40 w-full" />}
-          {!dailyBusy && !daily.error && dailyRows.length === 0 && (
+          {tripsBusy && <Skeleton className="h-24 w-full" />}
+          {!tripsBusy && tripRows.length === 0 && (
             <Empty>
               <EmptyHeader>
-                <EmptyTitle>No days in this range</EmptyTitle>
-                <EmptyDescription>Widen the date range to see the daily totals.</EmptyDescription>
+                <EmptyTitle>No trips in this range</EmptyTitle>
+                <EmptyDescription>Widen the date range to see the long drives.</EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}
-          {!dailyBusy && !daily.error && dailyRows.length > 0 && (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Trips</TableHead>
-                    <TableHead className="text-right">Avg duration (min)</TableHead>
-                    <TableHead className="text-right">Avg distance (km)</TableHead>
-                    <TableHead className="text-right">Total distance (km)</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {dailyRows.map((row) => (
-                    <TableRow key={row.trip_date}>
-                      <TableCell>{row.trip_date}</TableCell>
-                      <TableCell className="text-right">{row.trip_count}</TableCell>
-                      <TableCell className="text-right">{formatNumber(row.avg_duration_minutes)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(row.avg_distance_km, 2)}</TableCell>
-                      <TableCell className="text-right">{formatNumber(row.total_distance_km, 2)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+          {!tripsBusy && tripRows.length > 0 && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div>
+                  <div className="text-sm text-muted-foreground">Drives of {LONG_DRIVE_MINUTES}+ minutes</div>
+                  <div className="text-2xl font-semibold text-foreground">{longDrives.length}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">Longest gap without one</div>
+                  <div className="text-2xl font-semibold text-foreground">
+                    {formatNumber(gaps.longestGapDays)} <span className="text-sm font-normal">days</span>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-sm text-muted-foreground">On average, one every</div>
+                  <div className="text-2xl font-semibold text-foreground">
+                    {formatNumber(gaps.averageGapDays)} <span className="text-sm font-normal">days</span>
+                  </div>
+                </div>
+              </div>
+              <LongDriveTimeline drives={longDrives} rangeFrom={rangeFrom} rangeTo={rangeTo} gaps={gaps} />
             </div>
           )}
         </CardContent>
