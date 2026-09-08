@@ -55,6 +55,8 @@ computed from this data.
     with the trip metrics
 - `resources/job.yml`: a job that refreshes the pipeline every hour (the
   trigger is paused automatically in the dev target).
+- `car-trip-map/`: the Databricks App that shows the trips (its own AppKit
+  project with its own bundle - see below).
 
 ### The payload is double-encoded JSON
 
@@ -89,6 +91,43 @@ update/delete-handling logic your source doesn't produce. The
 history at once (each trip needs to see both its start and its end), so it
 stays a Materialized View - that kind of full-dataset join/aggregation can't
 be expressed incrementally.
+
+## The car-trip-map app
+
+`car-trip-map/` is a Databricks App (AppKit: TypeScript, React) that reads
+`car_usage.dev` through a SQL warehouse and shows:
+
+- headline numbers for the selected date range: trip count, average trip
+  length in minutes, average trip distance, total distance
+- a map with every trip drawn as a line from its start point (green) to its
+  end point (red)
+- trips per day and average trip length per day as charts
+- the `gold_trip_summary_daily` rows as a table
+
+Everything is filtered by one date range, seeded with the full range of the
+data. The map uses Leaflet with OpenStreetMap tiles.
+
+It is a separate bundle from the pipeline, so it deploys on its own:
+
+```
+$ cd car-trip-map
+$ npm install
+$ databricks apps deploy --profile <PROFILE>
+```
+
+The app runs its queries as its own service principal, which needs read
+access to the data (once, after the app is first created):
+
+```
+$ SP=$(databricks apps get car-trip-map --profile <PROFILE> -o json \
+    | jq -r .service_principal_client_id)
+$ databricks experimental aitools tools query \
+    "GRANT USE CATALOG ON CATALOG car_usage TO \`$SP\`" --profile <PROFILE>
+$ databricks experimental aitools tools query \
+    "GRANT USE SCHEMA, SELECT ON SCHEMA car_usage.dev TO \`$SP\`" --profile <PROFILE>
+```
+
+For local development, `cd car-trip-map && npm run dev`.
 
 ## Setup (one-time, manual)
 
