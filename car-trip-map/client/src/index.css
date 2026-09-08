@@ -81,6 +81,17 @@
   }
 }
 
+/* The blue the trip lines and the trip-start histogram share. */
+:root {
+  --trip-blue: oklch(0.55 0.18 255);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --trip-blue: oklch(0.72 0.15 255);
+  }
+}
+
 /* Leaflet's default div-icon draws its own white box - the markers bring their
    own SVG badge instead. */
 .trip-pin {
@@ -99,7 +110,7 @@
 /* Leaflet paths take their colors from the theme tokens: a CSS rule beats the
    stroke/fill presentation attributes Leaflet sets on the SVG elements. */
 .trip-line {
-  stroke: var(--chart-2);
+  stroke: var(--trip-blue);
 }
 
 /* The Leaflet tile pane must stay below the AppKit popovers and sheets. */

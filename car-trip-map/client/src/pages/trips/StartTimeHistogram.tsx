@@ -67,8 +67,13 @@ export function StartTimeHistogram({
             title={`${bin.count} trip${bin.count === 1 ? '' : 's'} · ${formatBinLabel(bin.from, bin.to)}`}
           >
             <div
-              className={`rounded-t-sm ${selected ? 'bg-chart-2' : 'bg-muted-foreground/30'}`}
-              style={{ height: `${(bin.count / busiestBin) * 100}%` }}
+              className="rounded-t-sm"
+              style={{
+                height: `${(bin.count / busiestBin) * 100}%`,
+                // Same blue as the trip lines on the map; dimmed outside the window.
+                backgroundColor: selected ? 'var(--trip-blue)' : 'var(--muted-foreground)',
+                opacity: selected ? 1 : 0.3,
+              }}
             />
           </div>
         );
