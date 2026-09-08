@@ -41,8 +41,6 @@ computed from this data.
 
 ## Project layout
 
-- `src/lakebase/schema.sql`: one-time DDL for the `logs` table (run manually -
-  see Setup below, not deployed by the bundle).
 - `resources/pipeline.yml`, `src/pipeline/`: the Lakeflow Declarative Pipeline
   (Python; bronze is the Lakehouse Sync CDC table, not part of this pipeline):
   - `transformations.py` - pure DataFrame-in/DataFrame-out logic, unit tested
@@ -94,29 +92,21 @@ be expressed incrementally.
 
 ## Setup (one-time, manual)
 
-Two of these steps have no CLI/API - Lakebase Data API and Lakehouse Sync are
-UI-only features.
+The Postgres `logs` table, the Lakebase Data API and Lakehouse Sync are all
+configured in the workspace, not from this repo. Lakehouse Sync writes
+`car_usage.lakebase_cdc.lb_logs_history`, which is the pipeline's only input
+(the `source_table` variable in `databricks.yml`).
 
-1. Run `src/lakebase/schema.sql` against the project's default
-   `databricks_postgres` database (Lakehouse Sync only syncs tables from that
-   database, not a custom one) - see the comment at the top of the file for
-   the exact commands.
-2. In the workspace: **Catalog → lakebase project → Data API → Enable**, then
-   grant the calling identity access (`src/lakebase/schema.sql` already grants
-   the role; add more `CREATE ROLE ... GRANT ...` lines for other identities).
-3. In the workspace: **Catalog → lakebase project → production branch →
-   Lakehouse Sync → Start Sync**, source database `databricks_postgres` /
-   schema `public`, destination `car_usage.lakebase_cdc` (the
-   `source_table` variable in `databricks.yml`). This creates
-   `lb_logs_history` and keeps it updated automatically.
-4. Create the output schema once per target (the bundle does not manage it):
+What this repo needs on a fresh target:
+
+1. Create the output schema (the bundle does not manage it):
    ```
    $ databricks experimental aitools tools query \
        'CREATE SCHEMA IF NOT EXISTS car_usage.dev' --profile <PROFILE>
    ```
-5. Deploy and run the pipeline (see below).
+2. Deploy and run the pipeline (see below).
 
-The iOS Shortcut then POSTs to the Data API's `/public/logs` endpoint with a
+The iOS Shortcut POSTs to the Data API's `/public/logs` endpoint with a
 Databricks OAuth/PAT bearer token and a single `payload` field holding JSON as
 text, e.g.
 `{"payload": "{\"event\":\"start\",\"latitude\":\"47.5\",\"longitude\":\"19.0\",\"logged_at\":\"Thu, 03 Sep 2026 08:18:57 +0200\"}"}`.
