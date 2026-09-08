@@ -18,6 +18,7 @@ import {
   Label,
   LineChart,
   Skeleton,
+  Slider,
   Table,
   TableBody,
   TableCell,
@@ -34,6 +35,15 @@ const SOURCE_NOTE = 'car_usage.dev.silver_trips';
 /** The analytics API serializes every numeric column as a string. */
 function toNumber(value: unknown): number {
   return Number(value);
+}
+
+function formatDateTime(epochMs: number) {
+  return new Date(epochMs).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function formatNumber(value: unknown, digits = 1) {
@@ -112,7 +122,28 @@ export function TripsPage() {
 
   const loading = !ready || totals.loading;
 
-  const resetRange = () => setRange(null);
+  // The slider under the map narrows the map to the trips that started inside
+  // the window. Its own bounds are the earliest and latest start time of the
+  // trips the date filter returned, so a new date range resets the window.
+  const startTimes = tripRows.map((trip) => new Date(trip.start_time).getTime());
+  const earliestStart = startTimes.length > 0 ? Math.min(...startTimes) : 0;
+  const latestStart = startTimes.length > 0 ? Math.max(...startTimes) : 0;
+  const slidable = latestStart > earliestStart;
+
+  const [startWindow, setStartWindow] = useState<{ bounds: [number, number]; value: [number, number] } | null>(null);
+  const windowMatchesData =
+    startWindow !== null && startWindow.bounds[0] === earliestStart && startWindow.bounds[1] === latestStart;
+  const [startWindowFrom, startWindowTo] = windowMatchesData ? startWindow.value : [earliestStart, latestStart];
+
+  const mappedTrips = tripRows.filter((trip) => {
+    const startedAt = new Date(trip.start_time).getTime();
+    return startedAt >= startWindowFrom && startedAt <= startWindowTo;
+  });
+
+  const resetRange = () => {
+    setRange(null);
+    setStartWindow(null);
+  };
 
   return (
     <div className="space-y-6 w-full max-w-7xl mx-auto">
@@ -193,7 +224,32 @@ export function TripsPage() {
               </EmptyHeader>
             </Empty>
           )}
-          {!trips.error && !trips.loading && tripRows.length > 0 && <TripMap trips={tripRows} />}
+          {!trips.error && !trips.loading && tripRows.length > 0 && (
+            <div className="space-y-4">
+              <TripMap trips={mappedTrips} fitTo={tripRows} />
+
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <Label htmlFor="start-time-window">Started between</Label>
+                  <span className="text-sm text-muted-foreground">
+                    {formatDateTime(startWindowFrom)} - {formatDateTime(startWindowTo)} · {mappedTrips.length} of{' '}
+                    {tripRows.length} trips
+                  </span>
+                </div>
+                <Slider
+                  id="start-time-window"
+                  min={earliestStart}
+                  max={slidable ? latestStart : earliestStart + 1}
+                  step={60_000}
+                  value={[startWindowFrom, startWindowTo]}
+                  disabled={!slidable}
+                  onValueChange={([from, to]) =>
+                    setStartWindow({ bounds: [earliestStart, latestStart], value: [from, to] })
+                  }
+                />
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 

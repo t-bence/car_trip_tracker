@@ -100,7 +100,8 @@ be expressed incrementally.
 - headline numbers for the selected date range: trip count, average trip
   length in minutes, average trip distance, total distance
 - a map with every trip drawn as a line from its start point (green) to its
-  end point (red)
+  end point (red), with a slider under it that narrows the map to the trips
+  that started inside a chosen window
 - trips per day and average trip length per day as charts
 - the `gold_trip_summary_daily` rows as a table
 

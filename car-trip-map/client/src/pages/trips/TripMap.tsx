@@ -37,14 +37,25 @@ function formatTime(value: string) {
   });
 }
 
-export function TripMap({ trips, height = 480 }: { trips: Trip[]; height?: number }) {
+export function TripMap({
+  trips,
+  fitTo = trips,
+  height = 480,
+}: {
+  /** The trips drawn on the map. */
+  trips: Trip[];
+  /** The trips the viewport is fitted to. Defaults to the drawn ones; pass the
+   *  unfiltered set to keep the view still while a filter changes. */
+  fitTo?: Trip[];
+  height?: number;
+}) {
   const points: LatLngTuple[] = useMemo(
     () =>
-      trips.flatMap((trip) => [
+      fitTo.flatMap((trip) => [
         [trip.start_latitude, trip.start_longitude] as LatLngTuple,
         [trip.end_latitude, trip.end_longitude] as LatLngTuple,
       ]),
-    [trips]
+    [fitTo]
   );
 
   const bounds = points.length > 0 ? (points as LatLngBoundsExpression) : null;
