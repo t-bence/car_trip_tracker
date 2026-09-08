@@ -28,6 +28,7 @@ import {
   useAnalyticsQuery,
 } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
+import { StartTimeHistogram } from './StartTimeHistogram';
 import { TripMap, type Trip } from './TripMap';
 
 const SOURCE_NOTE = 'car_usage.dev.silver_trips';
@@ -236,6 +237,13 @@ export function TripsPage() {
                     {tripRows.length} trips
                   </span>
                 </div>
+                <StartTimeHistogram
+                  startTimes={startTimes}
+                  from={earliestStart}
+                  to={latestStart}
+                  windowFrom={startWindowFrom}
+                  windowTo={startWindowTo}
+                />
                 <Slider
                   id="start-time-window"
                   min={earliestStart}
