@@ -7,18 +7,17 @@
 --   PGPASSWORD='<token>' psql "host=<host> user=<your-email> dbname=databricks_postgres sslmode=require" \
 --     -f src/lakebase/schema.sql
 
-CREATE TABLE IF NOT EXISTS trip_events (
+CREATE TABLE IF NOT EXISTS logs (
     id SERIAL PRIMARY KEY,
-    payload TEXT NOT NULL,
-    received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    payload TEXT NOT NULL
 );
 
 -- Lakehouse Sync requires full row images for updates/deletes.
-ALTER TABLE trip_events REPLICA IDENTITY FULL;
+ALTER TABLE logs REPLICA IDENTITY FULL;
 
 -- Lets the Data API caller (identified by this Databricks user's bearer token)
 -- read/write the table. Replace with the identity the iOS Shortcut authenticates as.
 CREATE ROLE "toth.bence.mihaly@gmail.com" LOGIN;
 GRANT USAGE ON SCHEMA public TO "toth.bence.mihaly@gmail.com";
-GRANT SELECT, INSERT ON trip_events TO "toth.bence.mihaly@gmail.com";
-GRANT USAGE ON SEQUENCE trip_events_id_seq TO "toth.bence.mihaly@gmail.com";
+GRANT SELECT, INSERT ON logs TO "toth.bence.mihaly@gmail.com";
+GRANT USAGE ON SEQUENCE logs_id_seq TO "toth.bence.mihaly@gmail.com";

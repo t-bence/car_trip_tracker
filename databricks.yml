@@ -12,7 +12,9 @@ variables:
   catalog:
     description: The catalog to use
   schema:
-    description: The schema to use
+    description: The schema the pipeline writes its tables to
+  source_table:
+    description: The Lakehouse Sync CDC history table the pipeline reads
 
 targets:
   dev:
@@ -25,8 +27,9 @@ targets:
     workspace:
       host: https://dbc-1bff540e-abbc.cloud.databricks.com
     variables:
-      catalog: car_trips
+      catalog: car_usage
       schema: dev
+      source_table: car_usage.lakebase_cdc.lb_logs_history
   prod:
     mode: production
     workspace:
@@ -34,8 +37,9 @@ targets:
       # We explicitly deploy to /Workspace/Users/toth.bence.mihaly@gmail.com to make sure we only have a single copy.
       root_path: /Workspace/Users/toth.bence.mihaly@gmail.com/.bundle/${bundle.name}/${bundle.target}
     variables:
-      catalog: car_trips
+      catalog: car_usage
       schema: prod
+      source_table: car_usage.lakebase_cdc.lb_logs_history
     permissions:
       - user_name: toth.bence.mihaly@gmail.com
         level: CAN_MANAGE
