@@ -1,0 +1,16 @@
+resources:
+  jobs:
+    trip_pipeline_job:
+      name: "${bundle.name}-job"
+      trigger:
+        # Runs the pipeline once an hour. Paused automatically in the dev target.
+        periodic:
+          interval: 1
+          unit: HOURS
+      email_notifications:
+        on_failure:
+          - toth.bence.mihaly@gmail.com
+      tasks:
+        - task_key: refresh_trip_pipeline
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.trip_pipeline.id}

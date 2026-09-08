@@ -1,0 +1,14 @@
+resources:
+  pipelines:
+    trip_pipeline:
+      name: "${bundle.name}-pipeline"
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      continuous: false
+      root_path: ../src/pipeline
+      configuration:
+        source_table: ${var.source_table}
+      libraries:
+        - glob:
+            include: ../src/pipeline/**
