@@ -1,7 +1,25 @@
 import { Fragment, useEffect, useMemo } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet';
-import type { LatLngBoundsExpression, LatLngTuple } from 'leaflet';
+import { MapContainer, TileLayer, Marker, Polyline, Tooltip, useMap } from 'react-leaflet';
+import { divIcon, type LatLngBoundsExpression, type LatLngTuple } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+
+/** A round badge holding one glyph. The badge takes its color from the CSS
+ *  class, so both markers follow the theme. */
+function pinIcon(className: string, glyph: string) {
+  return divIcon({
+    className: `trip-pin ${className}`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+    html: `<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+             <circle cx="12" cy="12" r="10" fill="currentColor" stroke="white" stroke-width="2" />
+             ${glyph}
+           </svg>`,
+  });
+}
+
+/** A play triangle for the start of a trip, a stop square for its end. */
+const START_ICON = pinIcon('trip-pin-start', '<polygon points="10,8 16,12 10,16" fill="white" />');
+const END_ICON = pinIcon('trip-pin-end', '<rect x="9" y="9" width="6" height="6" rx="1" fill="white" />');
 
 /** A trip with its numbers already parsed - the analytics API sends every
  *  numeric column as a string. */
@@ -85,12 +103,12 @@ export function TripMap({
             <Polyline positions={[start, end]} className="trip-line" weight={3} opacity={0.8}>
               <Tooltip sticky>{label}</Tooltip>
             </Polyline>
-            <CircleMarker center={start} radius={6} className="trip-start-marker">
+            <Marker position={start} icon={START_ICON}>
               <Tooltip>Start · {formatTime(trip.start_time)}</Tooltip>
-            </CircleMarker>
-            <CircleMarker center={end} radius={6} className="trip-end-marker">
+            </Marker>
+            <Marker position={end} icon={END_ICON}>
               <Tooltip>End · {formatTime(trip.end_time)}</Tooltip>
-            </CircleMarker>
+            </Marker>
           </Fragment>
         );
       })}

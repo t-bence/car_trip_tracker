@@ -81,20 +81,23 @@
   }
 }
 
+/* Leaflet's default div-icon draws its own white box - the markers bring their
+   own SVG badge instead. */
+.trip-pin {
+  background: transparent;
+  border: none;
+}
+
+.trip-pin-start {
+  color: var(--success);
+}
+
+.trip-pin-end {
+  color: var(--destructive);
+}
+
 /* Leaflet paths take their colors from the theme tokens: a CSS rule beats the
    stroke/fill presentation attributes Leaflet sets on the SVG elements. */
-.trip-start-marker {
-  stroke: var(--success);
-  fill: var(--success);
-  fill-opacity: 0.85;
-}
-
-.trip-end-marker {
-  stroke: var(--destructive);
-  fill: var(--destructive);
-  fill-opacity: 0.85;
-}
-
 .trip-line {
   stroke: var(--chart-2);
 }

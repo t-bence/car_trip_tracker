@@ -95,9 +95,17 @@ export function TripsPage() {
   const ready = startDate !== '' && endDate !== '';
   const parameters = ready ? { start_date: sql.date(startDate), end_date: sql.date(endDate) } : null;
 
-  const totals = useAnalyticsQuery('trip_totals', parameters);
-  const trips = useAnalyticsQuery('trips', parameters);
-  const daily = useAnalyticsQuery('daily_summary', parameters);
+  // The three queries below need the date range, which the bounds query
+  // provides. Until it arrives they stay unstarted rather than running with
+  // unbound parameters, which would fail and flash an error on first load.
+  const totals = useAnalyticsQuery('trip_totals', parameters, { autoStart: ready });
+  const trips = useAnalyticsQuery('trips', parameters, { autoStart: ready });
+  const daily = useAnalyticsQuery('daily_summary', parameters, { autoStart: ready });
+
+  // A query that has not started yet is still "busy" from the page's side.
+  const tripsBusy = !ready || trips.loading;
+  const dailyBusy = !ready || daily.loading;
+  const warehouseStarting = [bounds, totals, trips, daily].some((query) => query.warehouseStatus?.state === 'STARTING');
 
   const totalsRow = totals.data?.[0];
 
@@ -186,8 +194,8 @@ export function TripsPage() {
         </div>
       </div>
 
-      {bounds.error && <QueryError message={bounds.error} />}
-      {totals.error && <QueryError message={totals.error} />}
+      {!bounds.loading && bounds.error && <QueryError message={bounds.error} />}
+      {!loading && totals.error && <QueryError message={totals.error} />}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Kpi label="Trips" value={formatNumber(totalsRow?.trip_count, 0)} unit="in range" loading={loading} />
@@ -210,14 +218,19 @@ export function TripsPage() {
         <CardHeader>
           <CardTitle>Where the trips went</CardTitle>
           <CardDescription>
-            Each line connects a trip&apos;s start (green) to its end (red). Straight lines, not the route driven - only
-            the two endpoints are logged.
+            Each line runs from where a trip started (green play marker) to where it ended (red stop marker). Straight
+            lines, not the route driven - only the two endpoints are logged.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {trips.error && <QueryError message={trips.error} />}
-          {!trips.error && trips.loading && <Skeleton className="h-[480px] w-full" />}
-          {!trips.error && !trips.loading && tripRows.length === 0 && (
+          {!tripsBusy && trips.error && <QueryError message={trips.error} />}
+          {tripsBusy && (
+            <div className="space-y-2">
+              <Skeleton className="h-[480px] w-full" />
+              {warehouseStarting && <p className="text-sm text-muted-foreground">Starting the SQL warehouse...</p>}
+            </div>
+          )}
+          {!tripsBusy && !trips.error && tripRows.length === 0 && (
             <Empty>
               <EmptyHeader>
                 <EmptyTitle>No trips in this range</EmptyTitle>
@@ -225,7 +238,7 @@ export function TripsPage() {
               </EmptyHeader>
             </Empty>
           )}
-          {!trips.error && !trips.loading && tripRows.length > 0 && (
+          {!tripsBusy && !trips.error && tripRows.length > 0 && (
             <div className="space-y-4">
               <TripMap trips={mappedTrips} fitTo={tripRows} />
 
@@ -267,7 +280,7 @@ export function TripsPage() {
             <CardTitle>Trips per day</CardTitle>
           </CardHeader>
           <CardContent>
-            {daily.loading ? (
+            {dailyBusy ? (
               <Skeleton className="h-[260px] w-full" />
             ) : (
               <BarChart data={dailyRows} xKey="trip_date" yKey="trip_count" height={260} />
@@ -280,7 +293,7 @@ export function TripsPage() {
             <CardDescription>Minutes</CardDescription>
           </CardHeader>
           <CardContent>
-            {daily.loading ? (
+            {dailyBusy ? (
               <Skeleton className="h-[260px] w-full" />
             ) : (
               <LineChart data={dailyRows} xKey="trip_date" yKey="avg_duration_minutes" showSymbol height={260} />
@@ -295,9 +308,9 @@ export function TripsPage() {
           <CardDescription>car_usage.dev.gold_trip_summary_daily</CardDescription>
         </CardHeader>
         <CardContent>
-          {daily.error && <QueryError message={daily.error} />}
-          {!daily.error && daily.loading && <Skeleton className="h-40 w-full" />}
-          {!daily.error && !daily.loading && dailyRows.length === 0 && (
+          {!dailyBusy && daily.error && <QueryError message={daily.error} />}
+          {dailyBusy && <Skeleton className="h-40 w-full" />}
+          {!dailyBusy && !daily.error && dailyRows.length === 0 && (
             <Empty>
               <EmptyHeader>
                 <EmptyTitle>No days in this range</EmptyTitle>
@@ -305,7 +318,7 @@ export function TripsPage() {
               </EmptyHeader>
             </Empty>
           )}
-          {!daily.error && !daily.loading && dailyRows.length > 0 && (
+          {!dailyBusy && !daily.error && dailyRows.length > 0 && (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
