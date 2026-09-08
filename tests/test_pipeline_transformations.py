@@ -1,6 +1,4 @@
-"""Unit tests for src/pipeline/transformations.py, using the local
-SparkSession fixture from tests/conftest.py.
-"""
+"""Unit tests for src/pipeline/transformations.py."""
 
 import json
 import sys
@@ -25,22 +23,19 @@ TRIPS_SCHEMA = (
 
 
 def _ts(iso: str) -> datetime:
-    # Spark collects TIMESTAMP columns as naive datetimes in the driver's local
-    # timezone, so timestamps that are only written and read back stay
-    # consistent as naive values.
+    """A naive datetime, matching how Spark collects TIMESTAMP columns."""
     return datetime.fromisoformat(iso)
 
 
 def _utc(iso: str) -> datetime:
-    """The same instant as an aware UTC datetime, for values whose absolute
-    time matters (a parsed '+0200' timestamp must not depend on where the
-    tests run)."""
+    """An aware UTC datetime, for parsed timestamps whose instant must not
+    depend on where the tests run."""
     return datetime.fromisoformat(iso).replace(tzinfo=timezone.utc)
 
 
 def _payload(event: str, logged_at: str, latitude: float, longitude: float) -> str:
-    """Builds a payload exactly the way Lakebase stores it: a JSON object that
-    is itself JSON-encoded as a string."""
+    """A payload the way Lakebase stores it: a JSON object, JSON-encoded again
+    as a string."""
     inner = json.dumps(
         {
             "latitude": str(latitude),

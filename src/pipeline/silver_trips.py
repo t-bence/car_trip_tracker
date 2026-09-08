@@ -1,8 +1,7 @@
 """Trips reconstructed by pairing consecutive start/stop events.
 
-Pairing needs a global ordering across the full event history, so this stays a
-Materialized View (batch read) on top of the silver_trip_events Streaming
-Table, rather than an incremental append.
+Pairing needs a global ordering across the full event history, so this is a
+Materialized View over a batch read.
 """
 
 from pyspark import pipelines as dp

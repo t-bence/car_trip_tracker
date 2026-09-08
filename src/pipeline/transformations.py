@@ -1,9 +1,8 @@
 """Pure data-processing logic for the trip pipeline.
 
-Kept free of `spark.read`/`readStream`/`dp.*` calls so it can be unit tested
-with a plain local SparkSession - the pipeline files (silver_trip_events.py,
-silver_trips.py, gold_trip_summary_daily.py, gold_trip_stats.py) just wire
-these functions to their actual sources.
+Every function takes a DataFrame and returns one, so the whole thing runs on a
+plain local SparkSession in tests/test_pipeline_transformations.py. The
+pipeline files wire these functions to their actual sources.
 """
 
 from pyspark.sql import DataFrame
@@ -21,10 +20,8 @@ WEEKDAY_PREFIX_LENGTH = 5
 def parse_trip_event(history: DataFrame) -> DataFrame:
     """Extracts event type, coordinates and timestamp out of each payload.
 
-    The payload column holds a JSON *string* (the Data API caller sends the
-    object already serialized, so Postgres stores it double-encoded).
-    `get_json_object(payload, "$")` unwraps that outer string into the inner
-    JSON object text, which is then read field by field.
+    The payload column holds a double-encoded JSON object, so the outer string
+    is unwrapped with `get_json_object(payload, "$")` first.
     """
     unwrapped = F.get_json_object("payload", "$")
     logged_at = F.get_json_object(unwrapped, "$.logged_at")
@@ -39,12 +36,7 @@ def parse_trip_event(history: DataFrame) -> DataFrame:
 
 
 def haversine_km(lat1, lon1, lat2, lon2):
-    """Great-circle distance in kilometres between two coordinate columns.
-
-    This is the straight-line distance between the trip's start and end point,
-    not the distance actually driven on the road. The Shortcut only logs the
-    two endpoints, so the road distance cannot be computed from this data.
-    """
+    """Great-circle distance in kilometres between two coordinate columns."""
     lat1_rad, lat2_rad = F.radians(lat1), F.radians(lat2)
     d_lat = F.radians(lat2 - lat1)
     d_lon = F.radians(lon2 - lon1)
@@ -55,8 +47,9 @@ def haversine_km(lat1, lon1, lat2, lon2):
 def pair_trip_events(events: DataFrame) -> DataFrame:
     """Pairs each 'start' event with the next chronological 'stop' event.
 
-    Assumes a single car logging one trip at a time (events strictly alternate
-    start/stop) - not built to handle overlapping trips.
+    Assumes one car logging one trip at a time, so events alternate start/stop.
+    The distance is the straight line between the two endpoints, which are the
+    only positions logged.
     """
     order = Window.orderBy("event_time", "event_id")
     paired = (
