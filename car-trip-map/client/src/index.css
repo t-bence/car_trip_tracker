@@ -81,14 +81,15 @@
   }
 }
 
-/* The blue the trip lines and the trip-start histogram share. */
+/* The one blue this app draws with: the trip lines on the map, the histogram
+   bars under it, and the two charts (read from JS by useTripBlue). */
 :root {
-  --trip-blue: oklch(0.55 0.18 255);
+  --trip-blue: #3b82f6;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --trip-blue: oklch(0.72 0.15 255);
+    --trip-blue: #60a5fa;
   }
 }
 

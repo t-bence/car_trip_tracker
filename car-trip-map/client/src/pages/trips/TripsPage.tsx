@@ -28,6 +28,7 @@ import {
   useAnalyticsQuery,
 } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
+import { useTripBlue } from '../../lib/useTripBlue';
 import { StartTimeHistogram } from './StartTimeHistogram';
 import { TripMap, type Trip } from './TripMap';
 
@@ -82,6 +83,7 @@ function Kpi({ label, value, unit, loading }: { label: string; value: string; un
 }
 
 export function TripsPage() {
+  const tripBlue = useTripBlue();
   const bounds = useAnalyticsQuery('trip_bounds');
   const firstTripDate = bounds.data?.[0]?.first_trip_date;
   const lastTripDate = bounds.data?.[0]?.last_trip_date;
@@ -283,7 +285,7 @@ export function TripsPage() {
             {dailyBusy ? (
               <Skeleton className="h-[260px] w-full" />
             ) : (
-              <BarChart data={dailyRows} xKey="trip_date" yKey="trip_count" height={260} />
+              <BarChart data={dailyRows} xKey="trip_date" yKey="trip_count" colors={[tripBlue]} height={260} />
             )}
           </CardContent>
         </Card>
