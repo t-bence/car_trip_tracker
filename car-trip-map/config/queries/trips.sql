@@ -12,6 +12,6 @@ SELECT
   start_longitude,
   end_latitude,
   end_longitude
-FROM car_usage.dev.silver_trips
+FROM car_usage.prod.silver_trips
 WHERE to_date(start_time) BETWEEN :start_date AND :end_date
 ORDER BY start_time;

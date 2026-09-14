@@ -27,7 +27,7 @@ import { LongDriveTimeline } from './LongDriveTimeline';
 import { StartTimeHistogram } from './StartTimeHistogram';
 import { TripMap, type Trip } from './TripMap';
 
-const SOURCE_NOTE = 'car_usage.dev.silver_trips';
+const SOURCE_NOTE = 'car_usage.prod.silver_trips';
 
 /** A diesel particulate filter needs a sustained hot run to burn its soot off.
  *  Twenty minutes of continuous driving is the usual rule of thumb. */
