@@ -4,4 +4,4 @@ SELECT
   MAX(to_date(start_time)) AS last_trip_date,
   MAX(end_time) AS last_event_time,
   COUNT(*) AS total_trip_count
-FROM car_usage.dev.silver_trips;
+FROM car_usage.prod.silver_trips;

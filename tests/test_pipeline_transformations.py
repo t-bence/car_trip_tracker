@@ -33,10 +33,9 @@ def _utc(iso: str) -> datetime:
     return datetime.fromisoformat(iso).replace(tzinfo=timezone.utc)
 
 
-def _payload(event: str, logged_at: str, latitude: float, longitude: float) -> str:
-    """A payload the way Lakebase stores it: a JSON object, JSON-encoded again
-    as a string."""
-    inner = json.dumps(
+def _plain_payload(event: str, logged_at: str, latitude: float, longitude: float) -> str:
+    """A payload the way it arrives now: a plain JSON object."""
+    return json.dumps(
         {
             "latitude": str(latitude),
             "event": event,
@@ -44,7 +43,12 @@ def _payload(event: str, logged_at: str, latitude: float, longitude: float) -> s
             "logged_at": logged_at,
         }
     )
-    return json.dumps(inner)
+
+
+def _payload(event: str, logged_at: str, latitude: float, longitude: float) -> str:
+    """A payload the way it used to arrive: a JSON object, JSON-encoded again
+    as a string."""
+    return json.dumps(_plain_payload(event, logged_at, latitude, longitude))
 
 
 def test_parse_trip_event_reads_the_double_encoded_payload(spark):
@@ -69,6 +73,56 @@ def test_parse_trip_event_handles_a_stop_event(spark):
     row = parse_trip_event(history).collect()[0]
     assert row.event_type == "stop"
     assert row.event_time.astimezone(timezone.utc) == _utc("2026-09-03T06:39:07")
+
+
+def test_parse_trip_event_reads_a_plain_json_payload(spark):
+    history = spark.createDataFrame(
+        [(57, _plain_payload("start", "Sun, 13 Sep 2026 17:49:48 +0200", 47.50951581416798, 19.15243518876613))],
+        "id INT, payload STRING",
+    )
+    row = parse_trip_event(history).collect()[0]
+    assert row.event_id == 57
+    assert row.event_type == "start"
+    # 17:49:48 +0200 is 15:49:48 UTC.
+    assert row.event_time.astimezone(timezone.utc) == _utc("2026-09-13T15:49:48")
+    assert row.latitude == 47.50951581416798
+    assert row.longitude == 19.15243518876613
+
+
+def test_parse_trip_event_reads_both_payload_shapes_in_one_batch(spark):
+    history = spark.createDataFrame(
+        [
+            (54, _payload("stop", "Sat, 05 Sep 2026 13:40:13 +0200", 47.51106195860514, 19.00750741270148)),
+            (55, _plain_payload("start", "Sun, 13 Sep 2026 13:25:35 +0200", 47.51160392414295, 19.00847699688357)),
+        ],
+        "id INT, payload STRING",
+    )
+    rows = {row.event_id: row for row in parse_trip_event(history).collect()}
+    assert rows[54].event_type == "stop"
+    assert rows[54].latitude == 47.51106195860514
+    assert rows[54].event_time.astimezone(timezone.utc) == _utc("2026-09-05T11:40:13")
+    assert rows[55].event_type == "start"
+    assert rows[55].latitude == 47.51160392414295
+    assert rows[55].event_time.astimezone(timezone.utc) == _utc("2026-09-13T11:25:35")
+
+
+def test_parse_trip_event_tolerates_whitespace_around_a_double_encoded_payload(spark):
+    history = spark.createDataFrame(
+        [(60, "  " + _payload("stop", "Sun, 13 Sep 2026 18:24:25 +0200", 47.51151151281362, 19.00854449886282))],
+        "id INT, payload STRING",
+    )
+    row = parse_trip_event(history).collect()[0]
+    assert row.event_type == "stop"
+    assert row.latitude == 47.51151151281362
+
+
+def test_parse_trip_event_returns_nulls_for_a_missing_payload(spark):
+    history = spark.createDataFrame([(61, None)], "id INT, payload STRING")
+    row = parse_trip_event(history).collect()[0]
+    assert row.event_type is None
+    assert row.event_time is None
+    assert row.latitude is None
+    assert row.longitude is None
 
 
 def test_haversine_km_matches_a_known_distance(spark):

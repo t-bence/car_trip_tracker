@@ -7,5 +7,5 @@ SELECT
   AVG(distance_km) AS avg_distance_km,
   SUM(distance_km) AS total_distance_km,
   SUM(duration_minutes) AS total_duration_minutes
-FROM car_usage.dev.silver_trips
+FROM car_usage.prod.silver_trips
 WHERE to_date(start_time) BETWEEN :start_date AND :end_date;

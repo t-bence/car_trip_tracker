@@ -15,6 +15,9 @@ variables:
     description: The schema the pipeline writes its tables to
   source_table:
     description: The Lakehouse Sync CDC history table the pipeline reads
+  sql_warehouse_id:
+    description: The SQL warehouse the car-trip-map app queries
+    default: 153ca2fe17b9c405
 
 targets:
   dev:
@@ -43,3 +46,17 @@ targets:
     permissions:
       - user_name: toth.bence.mihaly@gmail.com
         level: CAN_MANAGE
+    resources:
+      apps:
+        car_trip_map:
+          name: car-trip-map
+          description: Map and daily stats of logged car trips
+          source_code_path: ./car-trip-map
+          # Start the app automatically on deploy.
+          lifecycle:
+            started: true
+          resources:
+            - name: sql-warehouse
+              sql_warehouse:
+                id: ${var.sql_warehouse_id}
+                permission: CAN_USE

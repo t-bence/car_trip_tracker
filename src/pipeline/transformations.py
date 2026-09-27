@@ -5,7 +5,7 @@ plain local SparkSession in tests/test_pipeline_transformations.py. The
 pipeline files wire these functions to their actual sources.
 """
 
-from pyspark.sql import DataFrame
+from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
@@ -17,13 +17,24 @@ LOGGED_AT_FORMAT = "dd MMM yyyy HH:mm:ss Z"
 WEEKDAY_PREFIX_LENGTH = 5
 
 
+def payload_json(column: str = "payload") -> Column:
+    """The payload as a plain JSON object string.
+
+    The payload arrives in two shapes. Older rows are double-encoded: the JSON
+    object is itself JSON-encoded as a string, so the value starts with a quote
+    and has to be unwrapped with `get_json_object(payload, "$")`. Newer rows
+    arrive as a plain JSON object and are used as they are.
+    """
+    payload = F.trim(F.col(column))
+    return F.when(payload.startswith('"'), F.get_json_object(payload, "$")).otherwise(payload)
+
+
 def parse_trip_event(history: DataFrame) -> DataFrame:
     """Extracts event type, coordinates and timestamp out of each payload.
 
-    The payload column holds a double-encoded JSON object, so the outer string
-    is unwrapped with `get_json_object(payload, "$")` first.
+    Both payload shapes are accepted, see `payload_json`.
     """
-    unwrapped = F.get_json_object("payload", "$")
+    unwrapped = payload_json()
     logged_at = F.get_json_object(unwrapped, "$.logged_at")
 
     return history.select(
