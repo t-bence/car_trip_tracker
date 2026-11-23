@@ -8,3 +8,16 @@ scratch/**
 !scratch/README.md
 **/explorations/**
 **/!explorations/README.md
+.DS_Store
+
+# AWS SAM build output
+.aws-sam/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+.pytest_cache/
+.ruff_cache/

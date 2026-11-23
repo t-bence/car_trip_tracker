@@ -8,7 +8,7 @@ resources:
       continuous: false
       root_path: ../src/pipeline
       configuration:
-        source_table: ${var.source_table}
+        events_path: ${var.events_path}
       libraries:
         - glob:
             include: ../src/pipeline/**

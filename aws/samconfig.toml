@@ -1,0 +1,15 @@
+# Deploy settings for `sam deploy`. Nothing secret: the API key is in SSM.
+# SelfAssume must stay true after the first deploy, see README.md.
+version = 0.1
+
+[default.global.parameters]
+profile = "default"
+region = "eu-central-1"
+
+[default.deploy.parameters]
+stack_name = "car-trip-tracker"
+resolve_s3 = true
+s3_prefix = "car-trip-tracker"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+confirm_changeset = false
+parameter_overrides = "SelfAssume=\"true\""

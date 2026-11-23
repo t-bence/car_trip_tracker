@@ -16,7 +16,13 @@ dev = [
     "pytest",
     "ruff",
     "pyspark>=3.5,<4",
+    # The ingest Lambda.
+    "boto3",
 ]
 
 [tool.ruff]
 line-length = 120
+
+[tool.pytest.ini_options]
+# The Databricks pipeline tests and the AWS ingest tests.
+testpaths = ["tests", "aws/tests"]

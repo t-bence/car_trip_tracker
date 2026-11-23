@@ -1,26 +1,43 @@
 # car_trip_tracker
 
-A personal car-trip logging system built on Databricks Free Edition.
+A personal car-trip logging system, split across AWS and Databricks.
 
-An iOS Shortcut posts trip start/stop events straight to Lakebase's Data API
-(no app in between) into a Postgres table. Lakehouse Sync then streams those
-changes into a Unity Catalog Delta table (bronze), and a Lakeflow Declarative
-Pipeline turns that into a silver `trips` table (pairing start/stop events)
-and two gold tables with the trip metrics.
+An iOS Shortcut posts trip start/stop events to an AWS Lambda, which stores
+each one in S3 as a JSON object. A Databricks Lakeflow Declarative Pipeline
+reads that prefix with Auto Loader and turns it into a silver `trips` table
+(pairing start/stop events) and two gold tables with the trip metrics. A
+Databricks App draws the result on a map.
 
 ```
-iOS Shortcut --HTTP(Data API)--> Lakebase Postgres (logs)
-                                        |  Lakehouse Sync (CDC, UI-only)
-                                        v
-                car_usage.lakebase_cdc.lb_logs_history (bronze, Delta)
-                                        |  Lakeflow Declarative Pipeline
-                                        v
-                       car_usage.dev.silver_trip_events
-                                        |
-                             car_usage.dev.silver_trips
-                                   /            \
-              gold_trip_summary_daily        gold_trip_stats
+iOS Shortcut --HTTPS--> AWS Lambda (car-trip-ingest)
+                                |  PUT, one JSON object per event
+                                v
+              s3://car-trip-events-<account>/events/<event_id>.json
+                                |  Auto Loader, Unity Catalog external location
+                                v
+                    car_usage.<schema>.bronze_trip_events
+                                |  Lakeflow Declarative Pipeline
+                                v
+                    car_usage.<schema>.silver_trip_events
+                                |
+                       car_usage.<schema>.silver_trips
+                             /            \
+        gold_trip_summary_daily        gold_trip_stats
 ```
+
+Ingest runs on AWS because logging a trip has to work at any hour, whether or
+not any Databricks compute happens to be awake. The pipeline only has to run
+once an hour.
+
+## Repository layout
+
+| Path | Side | What it is |
+| --- | --- | --- |
+| `aws/` | AWS | The ingest Lambda, its SAM template and their unit tests. See [aws/README.md](aws/README.md) |
+| `databricks.yml`, `resources/`, `src/pipeline/` | Databricks | The bundle, the job and the Lakeflow pipeline |
+| `car-trip-map/` | Databricks | The AppKit app that shows the trips |
+| `scripts/` | Databricks | The Unity Catalog setup script for the S3 bucket |
+| `tests/` | Databricks | Unit tests for the pipeline transformations |
 
 ## Tables
 
@@ -29,7 +46,8 @@ is `car_usage.dev` for the dev target and `car_usage.prod` for prod.
 
 | Table | Type | Content |
 | --- | --- | --- |
-| `silver_trip_events` | Streaming Table | one row per logged event: `event_id`, `event_type` (`start`/`stop`), `event_time`, `latitude`, `longitude` |
+| `bronze_trip_events` | Streaming Table | one row per JSON object landed in S3, read with Auto Loader, timestamps still as ISO 8601 strings |
+| `silver_trip_events` | Streaming Table | one row per logged event, typed: `event_id`, `event_type` (`start`/`stop`), `event_time`, `received_at`, `latitude`, `longitude` |
 | `silver_trips` | Materialized View | one row per trip: start/end event ids, start/end time and coordinates, `duration_minutes`, `distance_km` |
 | `gold_trip_summary_daily` | Materialized View | per day: `trip_count`, average/total/min/max duration and distance |
 | `gold_trip_stats` | Materialized View | a single row with the same metrics over all trips - the average trip length in time and in distance |
@@ -39,63 +57,48 @@ start and end point, computed with the haversine formula. The Shortcut only
 logs the two endpoints, so the distance actually driven on the road cannot be
 computed from this data.
 
-## Project layout
+## Pipeline layout
 
 - `resources/pipeline.yml`, `src/pipeline/`: the Lakeflow Declarative Pipeline
-  (Python; bronze is the Lakehouse Sync CDC table, not part of this pipeline):
+  (Python):
   - `transformations.py` - pure DataFrame-in/DataFrame-out logic, unit tested
     in `tests/test_pipeline_transformations.py` (no Databricks needed)
-  - `silver_trip_events.py` - Streaming Table: parses each event's JSON
-    payload, reading `lb_logs_history` incrementally. `logs` is insert-only,
-    so the CDC history table only ever contains `insert` rows for it - no
-    "latest state" dedup needed (see below for why)
+  - `bronze_trip_events.py` - Streaming Table: Auto Loader over the S3 events
+    prefix, one row per JSON object the Lambda wrote. The schema is declared,
+    and anything that does not fit lands in `_rescued_data`
+  - `silver_trip_events.py` - Streaming Table: casts the landed fields and
+    drops rows with an unknown event type, no timestamp or no coordinates
   - `silver_trips.py` - Materialized View: pairs consecutive start/stop events
     into trips (needs a full ordering across history, so it's a batch read)
   - `gold_trip_summary_daily.py`, `gold_trip_stats.py` - Materialized Views
     with the trip metrics
 - `resources/job.yml`: a job that refreshes the pipeline every hour (the
   trigger is paused automatically in the dev target).
-- `car-trip-map/`: the Databricks App that shows the trips (its own AppKit
-  project with its own bundle - see below).
+- `car-trip-map/`: the Databricks App that shows the trips (an AppKit project,
+  deployed by the `prod` target of this bundle).
 
-### The payload is double-encoded JSON
+### Why the ingest normalises and the pipeline does not
 
-The Shortcut sends the event object already serialized, so Postgres stores a
-JSON *string* in `payload`, not a JSON object:
-`"{\"latitude\":\"47.5\",\"event\":\"start\",...}"`.
-`parse_trip_event` therefore unwraps it with `get_json_object(payload, "$")`
-before reading the individual fields. `logged_at` arrives as
-`Thu, 03 Sep 2026 08:18:57 +0200`; Spark cannot parse the weekday name, so
-those first five characters are cut off before `to_timestamp`.
+The Lambda unwraps whatever the Shortcut posted, parses `logged_at` into a UTC
+`event_time` and writes a flat, typed JSON object. All of that logic is in
+`aws/src/trip_event.py`, where it gets plain Python unit tests.
+`parse_trip_event` in the pipeline is then only a cast.
 
-### Why a Streaming Table for silver_trip_events, not the CDC-dedup pattern?
+### Why a Streaming Table for the event tables
 
-Lakehouse Sync's `lb_<table>_history` tables are built for the general case:
-Postgres rows that get updated or deleted, where you need "current state"
-reconstructed via `ROW_NUMBER() ... ORDER BY _pg_lsn DESC`. That's the
-pattern Databricks' own CDC-to-medallion guidance defaults to, and it means a
-Materialized View that rescans the whole history table on every run.
+New events only ever arrive as new S3 objects, so Auto Loader tracks which
+files it has already read and each run picks up only the new ones. The
+`silver_trips` pairing step has to look across the *entire* event history at
+once, because each trip needs to see both its start and its end, so it stays a
+Materialized View.
 
-`logs` never gets updated or deleted - the Shortcut only INSERTs - so
-every CDC record for it is an `insert`. The history table itself is still
-plain append-only Delta underneath (each Postgres change, including
-updates/deletes when they happen, is one more appended audit row, never an
-in-place mutation), so nothing stops a Streaming Table from reading it via
-`spark.readStream.table(...)`: Databricks tracks the last-processed Delta
-version and each new Lakehouse Sync commit becomes one incremental
-micro-batch, instead of a full recompute. That's the "ingest incrementally
-off the Delta versions" the CDC dedup pattern is normally there to avoid
-needing - it's just already available for free once you drop the
-update/delete-handling logic your source doesn't produce. The
-`silver_trips` pairing step still has to look across the *entire* event
-history at once (each trip needs to see both its start and its end), so it
-stays a Materialized View - that kind of full-dataset join/aggregation can't
-be expressed incrementally.
+Duplicates are handled at the door rather than in Spark: the S3 key is a hash
+of the event, so a retry from the Shortcut overwrites the same object.
 
 ## The car-trip-map app
 
 `car-trip-map/` is a Databricks App (AppKit: TypeScript, React) that reads
-`car_usage.dev` through a SQL warehouse and shows:
+`car_usage.prod` through a SQL warehouse and shows:
 
 - headline numbers for the selected date range: trip count, average trip
   length in minutes, average trip distance, total distance
@@ -114,12 +117,11 @@ warning signs.
 Everything is filtered by one date range, seeded with the full range of the
 data. The map uses Leaflet with OpenStreetMap tiles.
 
-It is a separate bundle from the pipeline, so it deploys on its own:
+The app is part of this bundle, defined under the `prod` target, so it deploys
+with everything else:
 
 ```
-$ cd car-trip-map
-$ npm install
-$ databricks apps deploy --profile <PROFILE>
+$ databricks bundle deploy -t prod --profile <PROFILE>
 ```
 
 The app runs its queries as its own service principal, which needs read
@@ -131,40 +133,52 @@ $ SP=$(databricks apps get car-trip-map --profile <PROFILE> -o json \
 $ databricks experimental aitools tools query \
     "GRANT USE CATALOG ON CATALOG car_usage TO \`$SP\`" --profile <PROFILE>
 $ databricks experimental aitools tools query \
-    "GRANT USE SCHEMA, SELECT ON SCHEMA car_usage.dev TO \`$SP\`" --profile <PROFILE>
+    "GRANT USE SCHEMA, SELECT ON SCHEMA car_usage.prod TO \`$SP\`" --profile <PROFILE>
 ```
 
 For local development, `cd car-trip-map && npm run dev`.
 
-## Setup (one-time, manual)
+## Setup
 
-The Postgres `logs` table, the Lakebase Data API and Lakehouse Sync are all
-configured in the workspace, not from this repo. Lakehouse Sync writes
-`car_usage.lakebase_cdc.lb_logs_history`, which is the pipeline's only input
-(the `source_table` variable in `databricks.yml`).
+### 1. AWS
 
-What this repo needs on a fresh target:
+See [aws/README.md](aws/README.md). In short: put the shared secret in SSM,
+`sam deploy`, and note the Function URL and the `EventsPath` output.
 
-1. Create the output schema (the bundle does not manage it):
-   ```
-   $ databricks experimental aitools tools query \
-       'CREATE SCHEMA IF NOT EXISTS car_usage.dev' --profile <PROFILE>
-   ```
-2. Deploy and run the pipeline (see below).
+### 2. Unity Catalog access to the bucket
 
-The iOS Shortcut POSTs to the Data API's `/public/logs` endpoint with a
-Databricks OAuth/PAT bearer token and a single `payload` field holding JSON as
-text, e.g.
-`{"payload": "{\"event\":\"start\",\"latitude\":\"47.5\",\"longitude\":\"19.0\",\"logged_at\":\"Thu, 03 Sep 2026 08:18:57 +0200\"}"}`.
-`id` is filled in automatically. The event time comes from `logged_at`, not
-from the insert time, so events logged offline and posted later still land on
-the right day.
+```
+$ scripts/setup_uc_external_location.sh <PROFILE>
+```
 
-The 'car_trip_tracker' project was generated by using the default-python template.
+This creates the storage credential and the external location over
+`s3://car-trip-events-<account>/`, then validates that the IAM role works.
+It runs twice, with a `sam deploy` in between that makes the IAM role
+self-assuming. See [aws/README.md](aws/README.md#giving-databricks-read-access).
 
-* `tests/`: Unit tests for the shared Python code.
-* `fixtures/`: Fixtures for data sets (primarily used for testing).
+### 3. Databricks
 
+Set `events_path` in `databricks.yml` to the `EventsPath` output of the stack,
+create the output schemas (the bundle does not manage them), then deploy:
+
+```
+$ databricks experimental aitools tools query \
+    'CREATE SCHEMA IF NOT EXISTS car_usage.dev' --profile <PROFILE>
+$ databricks bundle deploy -t dev --profile <PROFILE>
+$ databricks bundle run trip_pipeline -t dev --profile <PROFILE>
+```
+
+### 4. The iOS Shortcut
+
+POST to the Function URL with an `X-Api-Key` header and the event as the body:
+
+```json
+{"payload": "{\"event\":\"start\",\"latitude\":\"47.5\",\"longitude\":\"19.0\",\"logged_at\":\"Thu, 03 Sep 2026 08:18:57 +0200\"}"}
+```
+
+A flat object without the `payload` wrapper works too. The event time comes
+from `logged_at`, not from the arrival time, so events logged offline and
+posted later still land on the right day.
 
 ## Getting started
 
@@ -218,6 +232,6 @@ with this project. It's also possible to interact with it directly using the CLI
    ```
    $ uv run pytest
    ```
-   Tests run against a local PySpark session (`spark` fixture in
-   `tests/conftest.py`, `pyspark` is a dev dependency) - no Databricks
-   auth/compute needed.
+   This runs both sides: `tests/` against a local PySpark session (`spark`
+   fixture in `tests/conftest.py`) and `aws/tests/` as plain Python. Neither
+   needs Databricks or AWS credentials.
