@@ -45,7 +45,7 @@ export function LongDriveTimeline({
             style={{
               left: `${positionPercent(drive.startedAt, rangeFrom, rangeTo)}%`,
               height: `${20 + (drive.durationMinutes / longestDrive) * 80}%`,
-              backgroundColor: 'var(--trip-blue)',
+              backgroundColor: 'var(--trip-color)',
             }}
             title={`${new Date(drive.startedAt).toLocaleString()} · ${drive.durationMinutes.toFixed(0)} min`}
           />

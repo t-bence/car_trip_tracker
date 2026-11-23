@@ -21,7 +21,7 @@ import {
   useAnalyticsQuery,
 } from '@databricks/appkit-ui/react';
 import { sql } from '@databricks/appkit-ui/js';
-import { useTripBlue } from '../../lib/useTripBlue';
+import { useTripColor } from '../../lib/useTripColor';
 import { summarizeGaps, type LongDrive } from '../../lib/longDrives';
 import { LongDriveTimeline } from './LongDriveTimeline';
 import { StartTimeHistogram } from './StartTimeHistogram';
@@ -81,28 +81,25 @@ function QueryError({ message }: { message: string }) {
   );
 }
 
-function Kpi({ label, value, unit, loading }: { label: string; value: string; unit: string; loading: boolean }) {
+/** One number in the stats strip: a small label above the value and its unit. */
+function Stat({ label, value, unit, loading }: { label: string; value: string; unit: string; loading: boolean }) {
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardDescription>{label}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <Skeleton className="h-8 w-24" />
-        ) : (
-          <div className="flex items-baseline gap-1">
-            <span className="text-3xl font-semibold text-foreground">{value}</span>
-            <span className="text-sm text-muted-foreground">{unit}</span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
+    <div className="px-4 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      {loading ? (
+        <Skeleton className="mt-1 h-6 w-16" />
+      ) : (
+        <div className="flex items-baseline gap-1">
+          <span className="text-xl font-semibold text-primary">{value}</span>
+          <span className="text-xs text-muted-foreground">{unit}</span>
+        </div>
+      )}
+    </div>
   );
 }
 
 export function TripsPage() {
-  const tripBlue = useTripBlue();
+  const tripColor = useTripColor();
   const bounds = useAnalyticsQuery('trip_bounds');
   const firstTripDate = bounds.data?.[0]?.first_trip_date;
   const lastTripDate = bounds.data?.[0]?.last_trip_date;
@@ -232,21 +229,66 @@ export function TripsPage() {
       {!bounds.loading && bounds.error && <QueryError message={bounds.error} />}
       {!loading && totals.error && <QueryError message={totals.error} />}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Kpi label="Trips" value={formatNumber(totalsRow?.trip_count, 0)} unit="in range" loading={loading} />
-        <Kpi
+      <Card className="grid grid-cols-2 gap-0 divide-border py-0 lg:grid-cols-4 lg:divide-x">
+        <Stat label="Trips" value={formatNumber(totalsRow?.trip_count, 0)} unit="in range" loading={loading} />
+        <Stat
           label="Average trip length"
           value={formatNumber(totalsRow?.avg_duration_minutes)}
           unit="minutes"
           loading={loading}
         />
-        <Kpi
+        <Stat
           label="Average trip distance"
           value={formatNumber(totalsRow?.avg_distance_km, 2)}
           unit="km"
           loading={loading}
         />
-        <Kpi label="Total distance" value={formatNumber(totalsRow?.total_distance_km, 1)} unit="km" loading={loading} />
+        <Stat
+          label="Total distance"
+          value={formatNumber(totalsRow?.total_distance_km, 1)}
+          unit="km"
+          loading={loading}
+        />
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="min-w-0">
+          <CardHeader>
+            <CardTitle>How long the trips are</CardTitle>
+            <CardDescription>
+              {tripsBusy
+                ? 'Minutes per trip'
+                : `${shortTrips} of ${tripRows.length} trips (${shortTripShare.toFixed(0)}%) are under ${LONG_DRIVE_MINUTES} minutes`}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {tripsBusy ? (
+              <Skeleton className="h-[240px] w-full" />
+            ) : (
+              <BarChart
+                data={durationBuckets}
+                xKey="bucket"
+                yKey="trip_count"
+                orientation="vertical"
+                colors={[tripColor]}
+                height={240}
+              />
+            )}
+          </CardContent>
+        </Card>
+        <Card className="min-w-0">
+          <CardHeader>
+            <CardTitle>Trips per day</CardTitle>
+            <CardDescription>Number of trips started on each day</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {!dailyBusy && daily.error && <QueryError message={daily.error} />}
+            {dailyBusy && <Skeleton className="h-[240px] w-full" />}
+            {!dailyBusy && !daily.error && (
+              <BarChart data={dailyRows} xKey="trip_date" yKey="trip_count" colors={[tripColor]} height={240} />
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
@@ -308,38 +350,6 @@ export function TripsPage() {
           )}
         </CardContent>
       </Card>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>Trips per day</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!dailyBusy && daily.error && <QueryError message={daily.error} />}
-            {dailyBusy && <Skeleton className="h-[260px] w-full" />}
-            {!dailyBusy && !daily.error && (
-              <BarChart data={dailyRows} xKey="trip_date" yKey="trip_count" colors={[tripBlue]} height={260} />
-            )}
-          </CardContent>
-        </Card>
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>How long the trips are</CardTitle>
-            <CardDescription>
-              {tripsBusy
-                ? 'Minutes per trip'
-                : `${shortTrips} of ${tripRows.length} trips (${shortTripShare.toFixed(0)}%) are under ${LONG_DRIVE_MINUTES} minutes`}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {tripsBusy ? (
-              <Skeleton className="h-[260px] w-full" />
-            ) : (
-              <BarChart data={durationBuckets} xKey="bucket" yKey="trip_count" colors={[tripBlue]} height={260} />
-            )}
-          </CardContent>
-        </Card>
-      </div>
 
       <Card>
         <CardHeader>
