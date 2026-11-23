@@ -71,7 +71,7 @@ export function StartTimeHistogram({
               style={{
                 height: `${(bin.count / busiestBin) * 100}%`,
                 // Same blue as the trip lines on the map; dimmed outside the window.
-                backgroundColor: selected ? 'var(--trip-blue)' : 'var(--muted-foreground)',
+                backgroundColor: selected ? 'var(--trip-color)' : 'var(--muted-foreground)',
                 opacity: selected ? 1 : 0.3,
               }}
             />
