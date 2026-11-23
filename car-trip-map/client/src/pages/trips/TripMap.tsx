@@ -22,9 +22,10 @@ const START_ICON = pinIcon('trip-pin-start', '<polygon points="10,8 16,12 10,16"
 const END_ICON = pinIcon('trip-pin-end', '<rect x="9" y="9" width="6" height="6" rx="1" fill="white" />');
 
 /** A trip with its numbers already parsed - the analytics API sends every
- *  numeric column as a string. */
+ *  numeric column as a string. The event id stays a string: it is a hash of
+ *  the event, not a number. */
 export interface Trip {
-  start_event_id: number;
+  start_event_id: string;
   start_time: string;
   end_time: string;
   duration_minutes: number;

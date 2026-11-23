@@ -5,44 +5,27 @@ plain local SparkSession in tests/test_pipeline_transformations.py. The
 pipeline files wire these functions to their actual sources.
 """
 
-from pyspark.sql import Column, DataFrame
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
 EARTH_RADIUS_KM = 6371.0
 
-# The Shortcut sends "Thu, 03 Sep 2026 08:18:57 +0200". Spark cannot parse the
-# weekday name, so the first 5 characters ("Thu, ") are cut off before parsing.
-LOGGED_AT_FORMAT = "dd MMM yyyy HH:mm:ss Z"
-WEEKDAY_PREFIX_LENGTH = 5
 
+def parse_trip_event(events: DataFrame) -> DataFrame:
+    """Casts the landed event fields to their real types.
 
-def payload_json(column: str = "payload") -> Column:
-    """The payload as a plain JSON object string.
-
-    The payload arrives in two shapes. Older rows are double-encoded: the JSON
-    object is itself JSON-encoded as a string, so the value starts with a quote
-    and has to be unwrapped with `get_json_object(payload, "$")`. Newer rows
-    arrive as a plain JSON object and are used as they are.
+    The ingest Lambda already unwrapped the payload and converted `logged_at`
+    into `event_time`, an ISO 8601 UTC string, so there is no JSON left to pull
+    apart here.
     """
-    payload = F.trim(F.col(column))
-    return F.when(payload.startswith('"'), F.get_json_object(payload, "$")).otherwise(payload)
-
-
-def parse_trip_event(history: DataFrame) -> DataFrame:
-    """Extracts event type, coordinates and timestamp out of each payload.
-
-    Both payload shapes are accepted, see `payload_json`.
-    """
-    unwrapped = payload_json()
-    logged_at = F.get_json_object(unwrapped, "$.logged_at")
-
-    return history.select(
-        F.col("id").cast("int").alias("event_id"),
-        F.get_json_object(unwrapped, "$.event").alias("event_type"),
-        F.to_timestamp(F.substring(logged_at, WEEKDAY_PREFIX_LENGTH + 1, 64), LOGGED_AT_FORMAT).alias("event_time"),
-        F.get_json_object(unwrapped, "$.latitude").cast("double").alias("latitude"),
-        F.get_json_object(unwrapped, "$.longitude").cast("double").alias("longitude"),
+    return events.select(
+        F.col("event_id").cast("string").alias("event_id"),
+        F.col("event").alias("event_type"),
+        F.to_timestamp("event_time").alias("event_time"),
+        F.to_timestamp("received_at").alias("received_at"),
+        F.col("latitude").cast("double").alias("latitude"),
+        F.col("longitude").cast("double").alias("longitude"),
     )
 
 
@@ -62,7 +45,7 @@ def pair_trip_events(events: DataFrame) -> DataFrame:
     The distance is the straight line between the two endpoints, which are the
     only positions logged.
     """
-    order = Window.orderBy("event_time", "event_id")
+    order = Window.orderBy("event_time", "received_at", "event_id")
     paired = (
         events.withColumn("next_event_type", F.lead("event_type").over(order))
         .withColumn("next_event_id", F.lead("event_id").over(order))

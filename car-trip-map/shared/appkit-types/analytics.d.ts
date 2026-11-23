@@ -70,10 +70,10 @@ declare module "@databricks/appkit-ui/react" {
           end_date: SQLDateMarker;
         };
         result: Array<{
-          /** @sqlType INT */
-          start_event_id: number;
-          /** @sqlType INT */
-          end_event_id: number;
+          /** @sqlType STRING */
+          start_event_id: string;
+          /** @sqlType STRING */
+          end_event_id: string;
           /** @sqlType TIMESTAMP */
           start_time: string;
           /** @sqlType TIMESTAMP */

@@ -131,7 +131,7 @@ export function TripsPage() {
   const totalsRow = totals.data?.[0];
 
   const tripRows: Trip[] = (trips.data ?? []).map((row) => ({
-    start_event_id: toNumber(row.start_event_id),
+    start_event_id: String(row.start_event_id),
     start_time: row.start_time,
     end_time: row.end_time,
     duration_minutes: toNumber(row.duration_minutes),

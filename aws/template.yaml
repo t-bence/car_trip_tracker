@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Trip event ingest for car_trip_tracker. An iOS Shortcut posts to the Lambda
+  Function URL, the Lambda writes one JSON object per event to S3, and a
+  Databricks Lakeflow pipeline reads that prefix with Auto Loader.
+
+Parameters:
+  DatabricksAccountId:
+    Type: String
+    Default: 43253402-84e2-4d54-8ddc-235b456ef351
+    Description: >
+      The Databricks account id. Unity Catalog presents it as the sts:ExternalId
+      when it assumes the reader role. Read it back from an existing storage
+      credential with `databricks storage-credentials get <name>`.
+  DatabricksUnityCatalogRoleArn:
+    Type: String
+    Default: arn:aws:iam::414351767826:role/unity-catalog-prod-UCMasterRole-14S5ZJVKOTYTL
+    Description: The Databricks-owned role that assumes the reader role.
+  ApiKeyParameter:
+    Type: String
+    Default: /car-trip-tracker/api-key
+    Description: >
+      SSM Parameter Store path of the shared secret the Shortcut sends in the
+      X-Api-Key header. Created outside this stack, see aws/README.md.
+  SelfAssume:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: >
+      Whether the reader role trusts itself, which Unity Catalog requires. IAM
+      rejects a trust policy that names a role which does not exist yet, so the
+      first deploy uses 'false' and every deploy after it uses 'true'.
+
+Conditions:
+  SelfAssumeEnabled: !Equals [!Ref SelfAssume, 'true']
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    MemorySize: 128
+    Timeout: 10
+
+Resources:
+  EventsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub car-trip-events-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: car-trip-ingest
+      CodeUri: src/
+      Handler: handler.handler
+      Description: Validates a posted trip event and stores it in S3.
+      Environment:
+        Variables:
+          EVENTS_BUCKET: !Ref EventsBucket
+          EVENTS_PREFIX: events
+          API_KEY_PARAMETER: !Ref ApiKeyParameter
+      FunctionUrlConfig:
+        # The shared secret in the X-Api-Key header is the authentication; an
+        # iOS Shortcut cannot sign a SigV4 request.
+        AuthType: NONE
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Sub car-trip-events-${AWS::AccountId}
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ApiKeyParameter}
+
+  # Unity Catalog assumes this role to read the events prefix. Databricks
+  # requires the role to be self-assuming: its trust policy names the role
+  # itself next to the Databricks-owned role, and its permissions policy allows
+  # sts:AssumeRole on itself. The self-trust is only added when SelfAssume is
+  # 'true', because the role has to exist first.
+  DatabricksReaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: car-trip-events-databricks-reader
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !If
+                - SelfAssumeEnabled
+                - - !Ref DatabricksUnityCatalogRoleArn
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/car-trip-events-databricks-reader
+                - - !Ref DatabricksUnityCatalogRoleArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref DatabricksAccountId
+      Policies:
+        - PolicyName: read-trip-events
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  - !GetAtt EventsBucket.Arn
+                  - !Sub ${EventsBucket.Arn}/*
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/car-trip-events-databricks-reader
+
+Outputs:
+  FunctionUrl:
+    Description: Post trip events here. The Shortcut needs this URL.
+    Value: !GetAtt IngestFunctionUrl.FunctionUrl
+  EventsBucketName:
+    Description: The bucket the events land in.
+    Value: !Ref EventsBucket
+  EventsPath:
+    Description: The value of the events_path variable in databricks.yml.
+    Value: !Sub s3://${EventsBucket}/events/
+  DatabricksReaderRoleArn:
+    Description: The role the Unity Catalog storage credential points at.
+    Value: !GetAtt DatabricksReaderRole.Arn

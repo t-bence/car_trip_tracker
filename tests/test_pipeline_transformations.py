@@ -1,6 +1,5 @@
 """Unit tests for src/pipeline/transformations.py."""
 
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,9 +14,15 @@ from transformations import (
     summarize_trips_overall,
 )
 
-EVENTS_SCHEMA = "event_id INT, event_type STRING, event_time TIMESTAMP, latitude DOUBLE, longitude DOUBLE"
+LANDED_SCHEMA = (
+    "event_id STRING, event STRING, event_time STRING, latitude DOUBLE, "
+    "longitude DOUBLE, logged_at STRING, received_at STRING"
+)
+EVENTS_SCHEMA = (
+    "event_id STRING, event_type STRING, event_time TIMESTAMP, received_at TIMESTAMP, latitude DOUBLE, longitude DOUBLE"
+)
 TRIPS_SCHEMA = (
-    "start_event_id INT, end_event_id INT, start_time TIMESTAMP, end_time TIMESTAMP, "
+    "start_event_id STRING, end_event_id STRING, start_time TIMESTAMP, end_time TIMESTAMP, "
     "duration_minutes DOUBLE, distance_km DOUBLE"
 )
 
@@ -33,92 +38,54 @@ def _utc(iso: str) -> datetime:
     return datetime.fromisoformat(iso).replace(tzinfo=timezone.utc)
 
 
-def _plain_payload(event: str, logged_at: str, latitude: float, longitude: float) -> str:
-    """A payload the way it arrives now: a plain JSON object."""
-    return json.dumps(
-        {
-            "latitude": str(latitude),
-            "event": event,
-            "longitude": str(longitude),
-            "logged_at": logged_at,
-        }
+def _landed(
+    event_id: str = "a1b2c3d4e5f60718",
+    event: str = "start",
+    event_time: str = "2026-09-03T06:18:57Z",
+    latitude: float = 47.51136133402844,
+    longitude: float = 19.00823675836947,
+    received_at: str = "2026-09-03T06:20:00Z",
+) -> tuple:
+    """One row the way Auto Loader reads it out of an event object in S3."""
+    return (
+        event_id,
+        event,
+        event_time,
+        latitude,
+        longitude,
+        "Thu, 03 Sep 2026 08:18:57 +0200",
+        received_at,
     )
 
 
-def _payload(event: str, logged_at: str, latitude: float, longitude: float) -> str:
-    """A payload the way it used to arrive: a JSON object, JSON-encoded again
-    as a string."""
-    return json.dumps(_plain_payload(event, logged_at, latitude, longitude))
-
-
-def test_parse_trip_event_reads_the_double_encoded_payload(spark):
-    history = spark.createDataFrame(
-        [(37, _payload("start", "Thu, 03 Sep 2026 08:18:57 +0200", 47.51136133402844, 19.00823675836947))],
-        "id INT, payload STRING",
-    )
-    row = parse_trip_event(history).collect()[0]
-    assert row.event_id == 37
+def test_parse_trip_event_casts_the_landed_fields(spark):
+    landed = spark.createDataFrame([_landed()], LANDED_SCHEMA)
+    row = parse_trip_event(landed).collect()[0]
+    assert row.event_id == "a1b2c3d4e5f60718"
     assert row.event_type == "start"
-    # 08:18:57 +0200 is 06:18:57 UTC.
     assert row.event_time.astimezone(timezone.utc) == _utc("2026-09-03T06:18:57")
+    assert row.received_at.astimezone(timezone.utc) == _utc("2026-09-03T06:20:00")
     assert row.latitude == 47.51136133402844
     assert row.longitude == 19.00823675836947
 
 
 def test_parse_trip_event_handles_a_stop_event(spark):
-    history = spark.createDataFrame(
-        [(38, _payload("stop", "Thu, 03 Sep 2026 08:39:07 +0200", 47.49550683875737, 19.03457501193951))],
-        "id INT, payload STRING",
+    landed = spark.createDataFrame(
+        [_landed(event="stop", event_time="2026-09-03T06:39:07Z")],
+        LANDED_SCHEMA,
     )
-    row = parse_trip_event(history).collect()[0]
+    row = parse_trip_event(landed).collect()[0]
     assert row.event_type == "stop"
     assert row.event_time.astimezone(timezone.utc) == _utc("2026-09-03T06:39:07")
 
 
-def test_parse_trip_event_reads_a_plain_json_payload(spark):
-    history = spark.createDataFrame(
-        [(57, _plain_payload("start", "Sun, 13 Sep 2026 17:49:48 +0200", 47.50951581416798, 19.15243518876613))],
-        "id INT, payload STRING",
+def test_parse_trip_event_returns_nulls_for_unusable_values(spark):
+    """The expectations on silver_trip_events drop these rows."""
+    landed = spark.createDataFrame(
+        [("id", None, "not a timestamp", None, None, None, None)],
+        LANDED_SCHEMA,
     )
-    row = parse_trip_event(history).collect()[0]
-    assert row.event_id == 57
-    assert row.event_type == "start"
-    # 17:49:48 +0200 is 15:49:48 UTC.
-    assert row.event_time.astimezone(timezone.utc) == _utc("2026-09-13T15:49:48")
-    assert row.latitude == 47.50951581416798
-    assert row.longitude == 19.15243518876613
-
-
-def test_parse_trip_event_reads_both_payload_shapes_in_one_batch(spark):
-    history = spark.createDataFrame(
-        [
-            (54, _payload("stop", "Sat, 05 Sep 2026 13:40:13 +0200", 47.51106195860514, 19.00750741270148)),
-            (55, _plain_payload("start", "Sun, 13 Sep 2026 13:25:35 +0200", 47.51160392414295, 19.00847699688357)),
-        ],
-        "id INT, payload STRING",
-    )
-    rows = {row.event_id: row for row in parse_trip_event(history).collect()}
-    assert rows[54].event_type == "stop"
-    assert rows[54].latitude == 47.51106195860514
-    assert rows[54].event_time.astimezone(timezone.utc) == _utc("2026-09-05T11:40:13")
-    assert rows[55].event_type == "start"
-    assert rows[55].latitude == 47.51160392414295
-    assert rows[55].event_time.astimezone(timezone.utc) == _utc("2026-09-13T11:25:35")
-
-
-def test_parse_trip_event_tolerates_whitespace_around_a_double_encoded_payload(spark):
-    history = spark.createDataFrame(
-        [(60, "  " + _payload("stop", "Sun, 13 Sep 2026 18:24:25 +0200", 47.51151151281362, 19.00854449886282))],
-        "id INT, payload STRING",
-    )
-    row = parse_trip_event(history).collect()[0]
-    assert row.event_type == "stop"
-    assert row.latitude == 47.51151151281362
-
-
-def test_parse_trip_event_returns_nulls_for_a_missing_payload(spark):
-    history = spark.createDataFrame([(61, None)], "id INT, payload STRING")
-    row = parse_trip_event(history).collect()[0]
+    row = parse_trip_event(landed).collect()[0]
     assert row.event_type is None
     assert row.event_time is None
     assert row.latitude is None
@@ -140,22 +107,22 @@ def test_haversine_km_is_zero_for_the_same_point(spark):
 def test_pair_trip_events_pairs_start_with_next_stop(spark):
     events = spark.createDataFrame(
         [
-            (1, "start", _ts("2026-01-01T08:00:00"), 47.4979, 19.0402),
-            (2, "stop", _ts("2026-01-01T08:30:00"), 47.5079, 19.0402),
+            ("e1", "start", _ts("2026-01-01T08:00:00"), _ts("2026-01-01T08:00:05"), 47.4979, 19.0402),
+            ("e2", "stop", _ts("2026-01-01T08:30:00"), _ts("2026-01-01T08:30:05"), 47.5079, 19.0402),
         ],
         EVENTS_SCHEMA,
     )
     rows = pair_trip_events(events).collect()
     assert len(rows) == 1
-    assert rows[0].start_event_id == 1
-    assert rows[0].end_event_id == 2
+    assert rows[0].start_event_id == "e1"
+    assert rows[0].end_event_id == "e2"
     assert rows[0].duration_minutes == 30.0
     assert 1.0 < rows[0].distance_km < 1.2
 
 
 def test_pair_trip_events_ignores_unmatched_start(spark):
     events = spark.createDataFrame(
-        [(1, "start", _ts("2026-01-01T08:00:00"), 47.4979, 19.0402)],
+        [("e1", "start", _ts("2026-01-01T08:00:00"), _ts("2026-01-01T08:00:05"), 47.4979, 19.0402)],
         EVENTS_SCHEMA,
     )
     assert pair_trip_events(events).count() == 0
@@ -164,8 +131,8 @@ def test_pair_trip_events_ignores_unmatched_start(spark):
 def test_pair_trip_events_ignores_stop_without_preceding_start(spark):
     events = spark.createDataFrame(
         [
-            (1, "stop", _ts("2026-01-01T08:00:00"), 47.4979, 19.0402),
-            (2, "start", _ts("2026-01-01T09:00:00"), 47.4979, 19.0402),
+            ("e1", "stop", _ts("2026-01-01T08:00:00"), _ts("2026-01-01T08:00:05"), 47.4979, 19.0402),
+            ("e2", "start", _ts("2026-01-01T09:00:00"), _ts("2026-01-01T09:00:05"), 47.4979, 19.0402),
         ],
         EVENTS_SCHEMA,
     )
@@ -175,24 +142,24 @@ def test_pair_trip_events_ignores_stop_without_preceding_start(spark):
 def test_pair_trip_events_pairs_several_consecutive_trips(spark):
     events = spark.createDataFrame(
         [
-            (1, "start", _ts("2026-01-01T08:00:00"), 47.4979, 19.0402),
-            (2, "stop", _ts("2026-01-01T08:30:00"), 47.5079, 19.0402),
-            (3, "start", _ts("2026-01-01T18:00:00"), 47.5079, 19.0402),
-            (4, "stop", _ts("2026-01-01T18:20:00"), 47.4979, 19.0402),
+            ("e1", "start", _ts("2026-01-01T08:00:00"), _ts("2026-01-01T08:00:05"), 47.4979, 19.0402),
+            ("e2", "stop", _ts("2026-01-01T08:30:00"), _ts("2026-01-01T08:30:05"), 47.5079, 19.0402),
+            ("e3", "start", _ts("2026-01-01T18:00:00"), _ts("2026-01-01T18:00:05"), 47.5079, 19.0402),
+            ("e4", "stop", _ts("2026-01-01T18:20:00"), _ts("2026-01-01T18:20:05"), 47.4979, 19.0402),
         ],
         EVENTS_SCHEMA,
     )
     rows = sorted(pair_trip_events(events).collect(), key=lambda r: r.start_event_id)
-    assert [r.start_event_id for r in rows] == [1, 3]
+    assert [r.start_event_id for r in rows] == ["e1", "e3"]
     assert [r.duration_minutes for r in rows] == [30.0, 20.0]
 
 
 def test_summarize_trips_daily_aggregates_by_date(spark):
     trips = spark.createDataFrame(
         [
-            (1, 2, _ts("2026-01-01T08:00:00"), _ts("2026-01-01T08:30:00"), 30.0, 10.0),
-            (3, 4, _ts("2026-01-01T18:00:00"), _ts("2026-01-01T18:10:00"), 10.0, 4.0),
-            (5, 6, _ts("2026-01-02T08:00:00"), _ts("2026-01-02T08:05:00"), 5.0, 1.0),
+            ("e1", "e2", _ts("2026-01-01T08:00:00"), _ts("2026-01-01T08:30:00"), 30.0, 10.0),
+            ("e3", "e4", _ts("2026-01-01T18:00:00"), _ts("2026-01-01T18:10:00"), 10.0, 4.0),
+            ("e5", "e6", _ts("2026-01-02T08:00:00"), _ts("2026-01-02T08:05:00"), 5.0, 1.0),
         ],
         TRIPS_SCHEMA,
     )
@@ -212,8 +179,8 @@ def test_summarize_trips_daily_aggregates_by_date(spark):
 def test_summarize_trips_overall_averages_every_trip(spark):
     trips = spark.createDataFrame(
         [
-            (1, 2, _ts("2026-01-01T08:00:00"), _ts("2026-01-01T08:30:00"), 30.0, 10.0),
-            (3, 4, _ts("2026-01-02T18:00:00"), _ts("2026-01-02T18:10:00"), 10.0, 4.0),
+            ("e1", "e2", _ts("2026-01-01T08:00:00"), _ts("2026-01-01T08:30:00"), 30.0, 10.0),
+            ("e3", "e4", _ts("2026-01-02T18:00:00"), _ts("2026-01-02T18:10:00"), 10.0, 4.0),
         ],
         TRIPS_SCHEMA,
     )
