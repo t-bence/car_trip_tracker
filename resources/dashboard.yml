@@ -1,0 +1,10 @@
+resources:
+  dashboards:
+    car_trips_dashboard:
+      display_name: Car trips
+      file_path: ../src/dashboards/car_trips.lvdash.json
+      warehouse_id: ${var.sql_warehouse_id}
+      # The dashboard queries use bare table names. These two fill in the
+      # catalog and schema, so dev reads car_usage.dev and prod car_usage.prod.
+      dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.schema}
