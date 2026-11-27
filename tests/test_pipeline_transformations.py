@@ -1,15 +1,19 @@
 """Unit tests for src/pipeline/transformations.py."""
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src" / "pipeline"))
 
+from pyspark.sql import functions as F
 from transformations import (
+    EngineThresholds,
     haversine_km,
     pair_trip_events,
     parse_trip_event,
+    profile_engine_use,
+    summarize_engine_use_weekly,
     summarize_trips_daily,
     summarize_trips_overall,
 )
@@ -189,3 +193,115 @@ def test_summarize_trips_overall_averages_every_trip(spark):
     assert rows[0].trip_count == 2
     assert rows[0].avg_duration_minutes == 20.0
     assert rows[0].avg_distance_km == 7.0
+
+
+PROFILE_TRIPS_SCHEMA = (
+    "start_event_id STRING, end_event_id STRING, start_time TIMESTAMP, end_time TIMESTAMP, "
+    "duration_minutes DOUBLE, start_latitude DOUBLE, start_longitude DOUBLE, "
+    "end_latitude DOUBLE, end_longitude DOUBLE, distance_km DOUBLE"
+)
+THRESHOLDS = EngineThresholds(cold_start_parked_hours=3.0, warm_up_minutes=10.0, long_drive_minutes=25.0)
+
+
+def _trip(trip_id: str, start: str, minutes: float) -> tuple:
+    """A silver_trips row that starts at `start` and lasts `minutes`."""
+    start_time = _ts(start)
+    end_time = start_time + timedelta(minutes=minutes)
+    return (trip_id, f"{trip_id}-end", start_time, end_time, minutes, 47.5, 19.0, 47.5, 19.0, 0.0)
+
+
+def _profile(spark, *trips: tuple) -> dict:
+    """The engine profile of the trips, keyed by start_event_id."""
+    profile = profile_engine_use(spark.createDataFrame(list(trips), PROFILE_TRIPS_SCHEMA), THRESHOLDS)
+    return {row.start_event_id: row for row in profile.collect()}
+
+
+def test_profile_engine_use_treats_the_first_trip_as_a_cold_start(spark):
+    rows = _profile(spark, _trip("t1", "2026-01-05T08:00:00", 30.0))
+    assert rows["t1"].parked_minutes_before is None
+    assert rows["t1"].is_cold_start
+
+
+def test_profile_engine_use_finds_cold_starts_by_parking_time(spark):
+    rows = _profile(
+        spark,
+        _trip("t1", "2026-01-05T08:00:00", 30.0),
+        # Parked 2 hours after t1 ended: the engine is still considered warm.
+        _trip("t2", "2026-01-05T10:30:00", 30.0),
+        # Parked exactly 3 hours after t2 ended: a cold start.
+        _trip("t3", "2026-01-05T14:00:00", 30.0),
+    )
+    assert rows["t2"].parked_minutes_before == 120.0
+    assert not rows["t2"].is_cold_start
+    assert rows["t3"].parked_minutes_before == 180.0
+    assert rows["t3"].is_cold_start
+
+
+def test_profile_engine_use_counts_the_warm_up_across_short_stops(spark):
+    rows = _profile(
+        spark,
+        # A cold start, 3 minutes of driving: the engine stays cold.
+        _trip("t1", "2026-01-05T08:00:00", 3.0),
+        # 5 minutes parked, 4 more minutes: 7 minutes in total, still cold.
+        _trip("t2", "2026-01-05T08:08:00", 4.0),
+        # 5 minutes parked, 8 more minutes: warm after 3 of them.
+        _trip("t3", "2026-01-05T08:17:00", 8.0),
+    )
+    assert [rows[t].warm_minutes for t in ("t1", "t2", "t3")] == [0.0, 0.0, 5.0]
+    assert [rows[t].is_cold_short_trip for t in ("t1", "t2", "t3")] == [True, True, False]
+
+
+def test_profile_engine_use_restarts_the_warm_up_after_a_cold_start(spark):
+    rows = _profile(
+        spark,
+        _trip("t1", "2026-01-05T08:00:00", 30.0),
+        _trip("t2", "2026-01-05T18:00:00", 6.0),
+    )
+    assert rows["t1"].warm_minutes == 20.0
+    assert rows["t2"].is_cold_start
+    assert rows["t2"].warm_minutes == 0.0
+    assert rows["t2"].is_cold_short_trip
+
+
+def test_profile_engine_use_classifies_long_drives_and_interrupted_regens(spark):
+    rows = _profile(
+        spark,
+        _trip("short", "2026-01-05T08:00:00", 9.0),
+        _trip("medium", "2026-01-06T08:00:00", 15.0),
+        _trip("long", "2026-01-07T08:00:00", 25.0),
+    )
+    assert [rows[t].is_long_drive for t in ("short", "medium", "long")] == [False, False, True]
+    assert [rows[t].is_possibly_interrupted_regen for t in ("short", "medium", "long")] == [False, True, False]
+
+
+def test_summarize_engine_use_weekly_fills_weeks_without_trips(spark):
+    profile = profile_engine_use(
+        spark.createDataFrame(
+            [
+                # Wednesday 2026-01-07: a cold start and a cold short trip.
+                _trip("t1", "2026-01-07T08:00:00", 5.0),
+                # Monday 2026-01-19: a cold start and a long drive.
+                _trip("t2", "2026-01-19T08:00:00", 40.0),
+            ],
+            PROFILE_TRIPS_SCHEMA,
+        ),
+        THRESHOLDS,
+    )
+    # Thursday 2026-01-22 is "today".
+    weekly = summarize_engine_use_weekly(profile, F.lit("2026-01-22").cast("date"))
+    rows = {row.week_start.isoformat(): row for row in weekly.collect()}
+
+    assert sorted(rows) == ["2026-01-05", "2026-01-12", "2026-01-19"]
+
+    first = rows["2026-01-05"]
+    assert (first.days_covered, first.is_complete_week) == (5, False)
+    assert (first.trip_count, first.cold_start_count, first.cold_short_trip_count) == (1, 1, 1)
+    assert first.long_drive_count == 0
+
+    empty = rows["2026-01-12"]
+    assert (empty.days_covered, empty.is_complete_week) == (7, True)
+    assert (empty.trip_count, empty.long_drive_count, empty.driving_minutes) == (0, 0, 0.0)
+
+    current = rows["2026-01-19"]
+    assert (current.days_covered, current.is_complete_week) == (4, False)
+    assert (current.long_drive_count, current.warm_minutes) == (1, 30.0)

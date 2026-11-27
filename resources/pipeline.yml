@@ -9,6 +9,10 @@ resources:
       root_path: ../src/pipeline
       configuration:
         events_path: ${var.events_path}
+        # The diesel rules of thumb used by gold_trip_engine_profile.
+        cold_start_parked_hours: "3"
+        warm_up_minutes: "10"
+        long_drive_minutes: "25"
       libraries:
         - glob:
             include: ../src/pipeline/**

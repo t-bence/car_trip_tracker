@@ -21,8 +21,10 @@ iOS Shortcut --HTTPS--> AWS Lambda (car-trip-ingest)
                     car_usage.<schema>.silver_trip_events
                                 |
                        car_usage.<schema>.silver_trips
-                             /            \
-        gold_trip_summary_daily        gold_trip_stats
+                    /                 |                  \
+  gold_trip_summary_daily      gold_trip_stats      gold_trip_engine_profile
+                                                              |
+                                                     gold_trip_engine_weekly
 ```
 
 Ingest runs on AWS because logging a trip has to work at any hour, whether or
@@ -52,6 +54,8 @@ is `car_usage.dev` for the dev target and `car_usage.prod` for prod.
 | `silver_trips` | Materialized View | one row per trip: start/end event ids, start/end time and coordinates, `duration_minutes`, `distance_km` |
 | `gold_trip_summary_daily` | Materialized View | per day: `trip_count`, average/total/min/max duration and distance |
 | `gold_trip_stats` | Materialized View | a single row with the same metrics over all trips - the average trip length in time and in distance |
+| `gold_trip_engine_profile` | Materialized View | one row per trip with its engine conditions: `parked_minutes_before`, `is_cold_start`, `warm_minutes`, `is_cold_short_trip`, `is_long_drive`, `is_possibly_interrupted_regen` |
+| `gold_trip_engine_weekly` | Materialized View | one row per week from the first trip to today, weeks without trips included: the counts of trips and engine conditions, driving and warm minutes, `days_covered`, `is_complete_week` |
 
 `distance_km` is the great-circle (straight-line) distance between the trip's
 start and end point, computed with the haversine formula. The Shortcut only
@@ -73,6 +77,9 @@ computed from this data.
     into trips (needs a full ordering across history, so it's a batch read)
   - `gold_trip_summary_daily.py`, `gold_trip_stats.py` - Materialized Views
     with the trip metrics
+  - `gold_trip_engine_profile.py`, `gold_trip_engine_weekly.py` -
+    Materialized Views with the engine conditions a diesel cares about (see
+    [Diesel suitability](#diesel-suitability))
 - `resources/job.yml`: a job that refreshes the pipeline every hour (the
   trigger is paused automatically in the dev target).
 - `car-trip-map/`: the Databricks App that shows the trips (an AppKit project,
@@ -144,20 +151,23 @@ For local development, `cd car-trip-map && npm run dev`.
 ## The Car trips dashboard
 
 `src/dashboards/car_trips.lvdash.json` is an AI/BI dashboard with most of
-what the app shows. The dashboard can also be opened in the Databricks
-mobile app. It shows:
+what the app shows, plus the diesel suitability verdict. The dashboard can
+also be opened in the Databricks mobile app. It shows:
 
-- the trip count, the average trip length in minutes and when the last trip
-  ended
+- the diesel verdict, the days since the last long drive and when the last
+  trip ended
+- the three ratings behind the verdict (see below)
+- a table of the engine conditions: per week, share of trips and in total
+- cold short trips and long drives week by week
+- every trip as a dot on a time axis, with a line at 25 minutes, and the
+  longest and average gap between long drives
+- the trip count and the average trip length in minutes
 - the trip durations in minute buckets, and the trips per day
 - a map with every trip drawn as a straight line from its start point to its
   end point, short trips and long drives in different colors
-- the share of trips under 20 minutes, the number of drives of 20+ minutes,
-  the longest gap without one and the average gap
-- every trip as a dot on a time axis, with a line at 20 minutes
 
-One date range filter drives every widget except the last trip
-tile. The dashboard shows no distances,
+One date range filter drives every widget except the last trip and the days
+since the last long drive tiles. The dashboard shows no distances,
 because `distance_km` is the straight-line distance between the two endpoints
 and not the distance driven. Times are in UTC.
 
@@ -173,6 +183,49 @@ into the file:
 $ databricks bundle generate dashboard --resource car_trips_dashboard \
     --force -t prod --profile <PROFILE>
 ```
+
+## Diesel suitability
+
+The tracker exists to answer one question: would a modern diesel suit our
+driving? A diesel suffers from three things: cold starts, short trips that
+end before the engine is warm, and too few long drives for the particulate
+filter to regenerate. The trip times are enough to estimate all three.
+
+`gold_trip_engine_profile` uses three rules of thumb, set in the pipeline
+configuration in `resources/pipeline.yml`:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `cold_start_parked_hours` | 3 | a trip is a cold start when the car was parked this long before it |
+| `warm_up_minutes` | 10 | the driving time after a cold start until the engine is warm |
+| `long_drive_minutes` | 25 | a trip this long lets the particulate filter regenerate |
+
+The warm-up counts across short stops until the next cold start. A 3-minute
+trip after a cold start, a 5-minute stop and a 4-minute trip add up to 7
+minutes of driving, so both trips are cold short trips. A trip of 10 to 25
+minutes is a possibly interrupted regeneration: warm enough to start one,
+too short to finish it.
+
+The dashboard rates three numbers over the selected date range. The verdict
+is the worst of the three.
+
+| Rating | Green | Red |
+| --- | --- | --- |
+| Weeks with a long drive | 90% or more | under 60% |
+| Cold short trips | under 20% of trips and at most 2 a week | over 40% of trips or more than 5 a week |
+| Warm driving time | over 70% | under 50% |
+
+"Weeks with a long drive" counts only complete weeks with at least one trip,
+because no soot builds up while the car stands. The per-week numbers divide
+by calendar weeks, so weeks without driving lower them. The thresholds are
+rules of thumb, not manufacturer figures. They live in the dashboard SQL,
+and `long_drive_minutes` also appears in the dashboard labels, so a change
+to it needs an edit in both places.
+
+The data has two limits. There is no speed, so a 25-minute drive in city
+traffic counts the same as one on the motorway, and the long drive rating is
+optimistic. There is no outside temperature, so the warm-up time is the same
+in winter and in summer.
 
 ## Setup
 
