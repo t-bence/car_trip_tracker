@@ -6,7 +6,7 @@ An iOS Shortcut posts trip start/stop events to an AWS Lambda, which stores
 each one in S3 as a JSON object. A Databricks Lakeflow Declarative Pipeline
 reads that prefix with Auto Loader and turns it into a silver `trips` table
 (pairing start/stop events) and two gold tables with the trip metrics. A
-Databricks App draws the result on a map.
+Databricks App and an AI/BI dashboard show the result on a map.
 
 ```
 iOS Shortcut --HTTPS--> AWS Lambda (car-trip-ingest)
@@ -36,6 +36,7 @@ once an hour.
 | `aws/` | AWS | The ingest Lambda, its SAM template and their unit tests. See [aws/README.md](aws/README.md) |
 | `databricks.yml`, `resources/`, `src/pipeline/` | Databricks | The bundle, the job and the Lakeflow pipeline |
 | `car-trip-map/` | Databricks | The AppKit app that shows the trips |
+| `src/dashboards/` | Databricks | The AI/BI dashboard that shows the trips |
 | `scripts/` | Databricks | The Unity Catalog setup script for the S3 bucket |
 | `tests/` | Databricks | Unit tests for the pipeline transformations |
 
@@ -76,6 +77,8 @@ computed from this data.
   trigger is paused automatically in the dev target).
 - `car-trip-map/`: the Databricks App that shows the trips (an AppKit project,
   deployed by the `prod` target of this bundle).
+- `resources/dashboard.yml`, `src/dashboards/`: the AI/BI dashboard that
+  shows the trips (deployed by both targets).
 
 ### Why the ingest normalises and the pipeline does not
 
@@ -137,6 +140,39 @@ $ databricks experimental aitools tools query \
 ```
 
 For local development, `cd car-trip-map && npm run dev`.
+
+## The Car trips dashboard
+
+`src/dashboards/car_trips.lvdash.json` is an AI/BI dashboard with most of
+what the app shows. The dashboard can also be opened in the Databricks
+mobile app. It shows:
+
+- the trip count, the average trip length in minutes and when the last trip
+  ended
+- the trip durations in minute buckets, and the trips per day
+- a map with every trip drawn as a straight line from its start point to its
+  end point, short trips and long drives in different colors
+- the share of trips under 20 minutes, the number of drives of 20+ minutes,
+  the longest gap without one and the average gap
+- every trip as a dot on a time axis, with a line at 20 minutes
+
+One date range filter drives every widget except the last trip
+tile. The dashboard shows no distances,
+because `distance_km` is the straight-line distance between the two endpoints
+and not the distance driven. Times are in UTC.
+
+The dashboard queries use bare table names. The bundle sets the catalog and
+schema with `dataset_catalog` and `dataset_schema`, so the dev target reads
+`car_usage.dev` and the prod target reads `car_usage.prod`. The dashboard
+runs its queries as the person viewing it.
+
+To change the dashboard, edit it in the workspace, then pull the change back
+into the file:
+
+```
+$ databricks bundle generate dashboard --resource car_trips_dashboard \
+    --force -t prod --profile <PROFILE>
+```
 
 ## Setup
 

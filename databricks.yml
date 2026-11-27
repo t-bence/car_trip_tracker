@@ -16,7 +16,7 @@ variables:
   events_path:
     description: The S3 prefix the ingest Lambda writes trip events to
   sql_warehouse_id:
-    description: The SQL warehouse the car-trip-map app queries
+    description: The SQL warehouse the car-trip-map app and the Car trips dashboard query
     default: 153ca2fe17b9c405
 
 targets:

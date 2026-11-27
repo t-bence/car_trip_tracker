@@ -1,0 +1,806 @@
+{
+  "datasets": [
+    {
+      "name": "ds_trips",
+      "displayName": "Trips",
+      "queryLines": [
+        "SELECT\n",
+        "  start_event_id,\n",
+        "  start_time,\n",
+        "  end_time,\n",
+        "  duration_minutes,\n",
+        "  CASE\n",
+        "    WHEN duration_minutes < 5 THEN '<5'\n",
+        "    WHEN duration_minutes < 10 THEN '5-10'\n",
+        "    WHEN duration_minutes < 20 THEN '10-20'\n",
+        "    WHEN duration_minutes < 30 THEN '20-30'\n",
+        "    WHEN duration_minutes < 45 THEN '30-45'\n",
+        "    WHEN duration_minutes < 60 THEN '45-60'\n",
+        "    ELSE '60+'\n",
+        "  END AS duration_bucket,\n",
+        "  CASE WHEN duration_minutes < 20 THEN 1 ELSE 0 END AS is_short_trip,\n",
+        "  CASE WHEN duration_minutes >= 20 THEN 'Long drive' ELSE 'Short trip' END AS trip_kind,\n",
+        "  ST_MAKELINE(ARRAY(\n",
+        "    ST_POINT(start_longitude, start_latitude, 4326),\n",
+        "    ST_POINT(end_longitude, end_latitude, 4326)\n",
+        "  )) AS trip_line\n",
+        "FROM silver_trips\n"
+      ]
+    },
+    {
+      "name": "ds_long_drive_gaps",
+      "displayName": "Gaps between long drives",
+      "queryLines": [
+        "WITH bounds AS (\n",
+        "  SELECT\n",
+        "    to_timestamp(greatest(:date_range.min, MIN(to_date(start_time)))) AS range_from,\n",
+        "    to_timestamp(least(:date_range.max, MAX(to_date(start_time)))) + make_dt_interval(0, 23, 59, 59) AS range_to\n",
+        "  FROM silver_trips\n",
+        "),\n",
+        "drives AS (\n",
+        "  SELECT start_time\n",
+        "  FROM silver_trips, bounds\n",
+        "  WHERE duration_minutes >= 20 AND start_time BETWEEN range_from AND range_to\n",
+        "),\n",
+        "marks AS (\n",
+        "  SELECT range_from AS mark_time FROM bounds\n",
+        "  UNION ALL SELECT start_time FROM drives\n",
+        "  UNION ALL SELECT range_to FROM bounds\n",
+        "),\n",
+        "gaps AS (\n",
+        "  SELECT (unix_timestamp(mark_time) - unix_timestamp(LAG(mark_time) OVER (ORDER BY mark_time))) / 86400.0 AS gap_days\n",
+        "  FROM marks\n",
+        ")\n",
+        "SELECT\n",
+        "  (SELECT COUNT(*) FROM drives) AS long_drive_count,\n",
+        "  MAX(gap_days) AS longest_gap_days,\n",
+        "  (SELECT (unix_timestamp(range_to) - unix_timestamp(range_from)) / 86400.0\n",
+        "     / greatest((SELECT COUNT(*) FROM drives), 1) FROM bounds) AS avg_gap_days\n",
+        "FROM gaps\n"
+      ],
+      "parameters": [
+        {
+          "displayName": "date_range",
+          "keyword": "date_range",
+          "dataType": "DATE",
+          "complexType": "RANGE",
+          "defaultSelection": {
+            "range": {
+              "dataType": "DATE",
+              "min": {
+                "value": "2025-01-01T00:00:00.000"
+              },
+              "max": {
+                "value": "now/d"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "ds_status",
+      "displayName": "Last trip",
+      "queryLines": [
+        "SELECT date_format(MAX(end_time), 'yyyy-MM-dd HH:mm') AS last_trip_ended\n",
+        "FROM silver_trips\n"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "trips",
+      "displayName": "Car trips",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "filter-date-range",
+            "queries": [
+              {
+                "name": "q_trips_start_time",
+                "query": {
+                  "datasetName": "ds_trips",
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "q_gaps_date_range",
+                "query": {
+                  "datasetName": "ds_long_drive_gaps",
+                  "parameters": [
+                    {
+                      "name": "date_range",
+                      "keyword": "date_range"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "start_time",
+                    "queryName": "q_trips_start_time"
+                  },
+                  {
+                    "parameterName": "date_range",
+                    "queryName": "q_gaps_date_range"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trip start date"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-trips",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_trips",
+                  "fields": [
+                    {
+                      "name": "count(*)",
+                      "expression": "COUNT(`*`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(*)",
+                  "displayName": "Trips"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trips"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-avg-minutes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_trips",
+                  "fields": [
+                    {
+                      "name": "avg(duration_minutes)",
+                      "expression": "AVG(`duration_minutes`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(duration_minutes)",
+                  "displayName": "Average trip length",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{ @formatted }} min"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Average trip length"
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-last-trip",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_status",
+                  "fields": [
+                    {
+                      "name": "last_trip_ended",
+                      "expression": "`last_trip_ended`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "last_trip_ended",
+                  "displayName": "Last trip ended (UTC)"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Last trip ended (UTC)"
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-duration-buckets",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_trips",
+                  "fields": [
+                    {
+                      "name": "duration_bucket",
+                      "expression": "`duration_bucket`"
+                    },
+                    {
+                      "name": "count(*)",
+                      "expression": "COUNT(`*`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "duration_bucket",
+                  "displayName": "Minutes",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "<5",
+                        "5-10",
+                        "10-20",
+                        "20-30",
+                        "30-45",
+                        "45-60",
+                        "60+"
+                      ]
+                    }
+                  }
+                },
+                "y": {
+                  "fieldName": "count(*)",
+                  "displayName": "Trips",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "How long the trips are",
+                "showDescription": true,
+                "description": "Number of trips by length in minutes"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-trips-per-day",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_trips",
+                  "fields": [
+                    {
+                      "name": "daily(start_time)",
+                      "expression": "DATE_TRUNC(\"DAY\", `start_time`)"
+                    },
+                    {
+                      "name": "count(*)",
+                      "expression": "COUNT(`*`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "daily(start_time)",
+                  "displayName": "Day",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "count(*)",
+                  "displayName": "Trips",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trips per day",
+                "showDescription": true,
+                "description": "Number of trips started on each day"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "map-trips",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_trips",
+                  "fields": [
+                    {
+                      "name": "trip_line_geojson",
+                      "expression": "ST_ASGEOJSON(`trip_line`)"
+                    },
+                    {
+                      "name": "trip_kind",
+                      "expression": "`trip_kind`"
+                    },
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "duration_minutes",
+                      "expression": "`duration_minutes`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 1,
+              "widgetType": "path-map",
+              "encodings": {
+                "path": {
+                  "pathType": "geometry",
+                  "fieldName": "trip_line_geojson"
+                },
+                "color": {
+                  "fieldName": "trip_kind",
+                  "displayName": "Trip",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Short trip",
+                        "color": "#157584"
+                      },
+                      {
+                        "value": "Long drive",
+                        "color": "#C98A2B"
+                      }
+                    ]
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "Started"
+                  },
+                  {
+                    "fieldName": "duration_minutes",
+                    "displayName": "Minutes"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Where the trips went",
+                "showDescription": true,
+                "description": "Each line runs from where a trip started to where it ended. Straight lines, not the route driven: only the two endpoints are logged."
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 9
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-short-share",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_trips",
+                  "fields": [
+                    {
+                      "name": "avg(is_short_trip)",
+                      "expression": "AVG(`is_short_trip`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg(is_short_trip)",
+                  "displayName": "Trips under 20 minutes",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 0
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trips under 20 minutes"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 20,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-long-drives",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_long_drive_gaps",
+                  "fields": [
+                    {
+                      "name": "long_drive_count",
+                      "expression": "`long_drive_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "long_drive_count",
+                  "displayName": "Drives of 20+ minutes"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Drives of 20+ minutes"
+              }
+            }
+          },
+          "position": {
+            "x": 3,
+            "y": 20,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-longest-gap",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_long_drive_gaps",
+                  "fields": [
+                    {
+                      "name": "longest_gap_days",
+                      "expression": "`longest_gap_days`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "longest_gap_days",
+                  "displayName": "Longest gap without one",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{ @formatted }} days"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Longest gap without one"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 20,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-avg-gap",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_long_drive_gaps",
+                  "fields": [
+                    {
+                      "name": "avg_gap_days",
+                      "expression": "`avg_gap_days`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "avg_gap_days",
+                  "displayName": "On average, one every",
+                  "format": {
+                    "type": "number-plain",
+                    "decimalPlaces": {
+                      "type": "exact",
+                      "places": 1
+                    }
+                  },
+                  "formatTemplate": "{{ @formatted }} days"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "On average, one every"
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 20,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-long-drive-timeline",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_trips",
+                  "fields": [
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "duration_minutes",
+                      "expression": "`duration_minutes`"
+                    },
+                    {
+                      "name": "trip_kind",
+                      "expression": "`trip_kind`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "start_time",
+                  "displayName": "Started",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "duration_minutes",
+                  "displayName": "Minutes",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "trip_kind",
+                  "displayName": "Trip",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Short trip",
+                        "color": "#157584"
+                      },
+                      {
+                        "value": "Long drive",
+                        "color": "#C98A2B"
+                      }
+                    ]
+                  }
+                }
+              },
+              "annotations": [
+                {
+                  "type": "horizontal-line",
+                  "encodings": {
+                    "y": {
+                      "dataValue": "20",
+                      "dataType": "INTEGER"
+                    },
+                    "label": {
+                      "value": "20 minutes"
+                    },
+                    "color": {
+                      "value": "#C98A2B"
+                    }
+                  }
+                }
+              ],
+              "frame": {
+                "showTitle": true,
+                "title": "Every trip over time",
+                "showDescription": true,
+                "description": "Each dot is a trip. Dots above the line are long drives, the sustained hot runs a diesel particulate filter needs to burn its soot off."
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 23,
+            "width": 12,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#F7F4EE",
+        "dark": "#0F1D25"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#16262F"
+      },
+      "widgetBorderColor": {
+        "light": "#FFFFFF",
+        "dark": "#16262F"
+      },
+      "fontColor": {
+        "light": "#1C3340",
+        "dark": "#F1EDE5"
+      },
+      "selectionColor": {
+        "light": "#157584",
+        "dark": "#4FC4C4"
+      },
+      "visualizationColors": [
+        "#157584",
+        "#C98A2B",
+        "#4FA3A5",
+        "#8C5A3C",
+        "#2E4A62",
+        "#D6B36A"
+      ],
+      "widgetHeaderAlignment": "LEFT",
+      "widgetCornerRadius": 8
+    }
+  }
+}
